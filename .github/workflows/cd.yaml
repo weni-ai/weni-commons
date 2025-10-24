@@ -1,0 +1,38 @@
+name: CD
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+      - "*.*.*a*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.8
+
+      - name: Install Poetry
+        run: |
+          pip install --upgrade pip poetry
+          poetry config virtualenvs.create false --local
+          poetry install
+
+      - name: Verify Poetry installation
+        run: poetry --version
+
+      - name: Build package
+        run: poetry build
+
+      - name: Publish to pypi
+        shell: bash
+        run: |
+          poetry config pypi-token.pypi ${{ secrets.PYPI_TOKEN }}
+          poetry publish
