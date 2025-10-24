@@ -43,3 +43,7 @@ You can access the complete instructions on how to use its features [here](https
 ## Contributing
 
 This library is designed to grow with Weni's needs. If you have common utilities that could benefit multiple Django projects, consider contributing them to this library.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
