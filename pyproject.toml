@@ -3,7 +3,7 @@ profile = "black"
 
 [tool.poetry]
 name = "weni-commons"
-version = "0.0.1a1"
+version = "0.0.1a2"
 description = "Weni's common utilities for Python backends"
 authors = ["Kallil Souza dos Santos <kallilsouza@hotmail.com>"]
 readme = "README.md"
@@ -15,7 +15,7 @@ django = ">=3.2.22,<6.0"
 djangorestframework = ">=3.12.0,<4.0"
 django-redis = ">=4.0.0,<6.0"
 celery = ">=5.0.0,<6.0"
-weni-feature-flags = "2.0.0a0"
+weni-feature-flags = "^2.0.0"
 
 [build-system]
 requires = ["poetry-core"]

@@ -1244,13 +1244,13 @@ files = [
 
 [[package]]
 name = "weni-feature-flags"
-version = "2.0.0a0"
+version = "2.0.0"
 description = "Weni's feature flags SDK for Python backends"
 optional = false
 python-versions = "<4.0,>=3.8"
 files = [
-    {file = "weni_feature_flags-2.0.0a0-py3-none-any.whl", hash = "sha256:bc12a7f5845cbad9d5ed0d533b288723021d90852c72c08fff8230e608c320dc"},
-    {file = "weni_feature_flags-2.0.0a0.tar.gz", hash = "sha256:a79e012b10ce14539a5e789d6e835d72c4d6284d866c87dce2cc921ec1ae8abd"},
+    {file = "weni_feature_flags-2.0.0-py3-none-any.whl", hash = "sha256:c377ef2378e865b1aee3cfb5c5365ea95ce48efbfbdad5977a8ce25cc2e56c0f"},
+    {file = "weni_feature_flags-2.0.0.tar.gz", hash = "sha256:bd43c88d0376ae8bab66b1f3ba53babea2bffdb7c2366224683efe7b694cd471"},
 ]
 
 [package.dependencies]
@@ -1376,4 +1376,4 @@ propcache = ">=0.2.0"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.8,<4.0"
-content-hash = "5e00f2c65d6741f9525f836636ba48226fae4919f46032c624b8b2b1d6b475b6"
+content-hash = "f76f89afa841797054cf473c894e76473009bb7377509459dd40073a647f77d5"
