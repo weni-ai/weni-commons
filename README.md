@@ -24,7 +24,7 @@ pip install weni-commons
 Weni Feature Flags is a Python Library that functions as an abstraction layer between Django projects and GrowthBook.
 
 ```python
-from weni_commons import FeatureFlagsService
+from weni.feature_flags.services import FeatureFlagsService
 
 # Use the feature flags service
 feature_service = FeatureFlagsService()
