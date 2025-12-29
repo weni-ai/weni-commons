@@ -13,9 +13,9 @@ packages = [{ include = "weni_commons" }]
 python = ">=3.8,<4.0"
 django = ">=3.2.22,<6.0"
 djangorestframework = ">=3.12.0,<4.0"
-django-redis = ">=4.0.0,<6.0"
+django-redis = ">=4.0.0,<=6.0"
 celery = ">=5.0.0,<6.0"
-weni-feature-flags = "^2.1.0"
+weni-feature-flags = "^2.1.1"
 
 [build-system]
 requires = ["poetry-core"]
