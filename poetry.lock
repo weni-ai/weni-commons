@@ -1243,6 +1243,20 @@ files = [
 ]
 
 [[package]]
+name = "weni-eda"
+version = "0.1.2"
+description = ""
+optional = false
+python-versions = "<4.0,>=3.8"
+files = [
+    {file = "weni_eda-0.1.2-py3-none-any.whl", hash = "sha256:83696e1fa277dc494c0aa17c13340c7a3b8e491526419629f111a03cae934610"},
+    {file = "weni_eda-0.1.2.tar.gz", hash = "sha256:395ce3c9bf6a33a1a27c2482a60d49a40ccdad21fb1df39ce2b2db59f885f004"},
+]
+
+[package.dependencies]
+amqp = ">=5.2.0,<6.0.0"
+
+[[package]]
 name = "weni-feature-flags"
 version = "2.1.2"
 description = "Weni's feature flags SDK for Python backends"
@@ -1376,4 +1390,4 @@ propcache = ">=0.2.0"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.8,<4.0"
-content-hash = "22fd46fdaed68f0c34d16d87512efacea0f6ddfca196ce5069b17678782d8bfe"
+content-hash = "7b07edc52606bbfff5d3e1a4da0880d5284db7482d17400172c7f06f270e145d"
