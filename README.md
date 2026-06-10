@@ -32,6 +32,41 @@ feature_service = FeatureFlagsService()
 
 You can access the complete instructions on how to use its features [here](https://github.com/weni-ai/weni-feature-flags/blob/main/README.md).
 
+### Session Token Validation
+
+Validate session hashes issued by Connect against centralized Redis. Apply the decorator to any DRF `APIView` — no per-project validation code required.
+
+**Requirements:** `CACHES` must point to the same Redis instance Connect writes to:
+
+```python
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": env("REDIS_URL"),
+        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+    }
+}
+```
+
+**Usage:**
+
+```python
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from weni_commons.auth import require_session_token
+
+@require_session_token
+class ContactsView(APIView):
+    def get(self, request):
+        project = request.weni_session.projeto
+        user = request.weni_session.user
+        return Response({"project": project, "user": user})
+```
+
+Clients must send the hash via `Authorization: Bearer <hash>`. Invalid or expired tokens receive `403 Forbidden` before the view handler runs.
+
+Optional setting: `WENI_SESSION_TOKEN_REDIS_ALIAS` (default `"default"`) to select the Redis cache alias.
+
 ## Requirements
 
 - Python >= 3.8
