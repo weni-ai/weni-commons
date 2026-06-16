@@ -34,7 +34,7 @@ You can access the complete instructions on how to use its features [here](https
 
 ### Session Token Validation
 
-Validate session hashes issued by Connect against centralized Redis. Apply the decorator to any DRF `APIView` — no per-project validation code required.
+Validate session hashes issued by Connect against centralized Redis using a DRF authentication class that composes with existing JWT/OIDC backends.
 
 **Requirements:** `CACHES` must point to the same Redis instance Connect writes to:
 
@@ -51,19 +51,33 @@ CACHES = {
 **Usage:**
 
 ```python
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from weni_commons.auth import require_session_token
+from weni_commons.auth import SessionTokenAuthentication
 
-@require_session_token
 class ContactsView(APIView):
+    authentication_classes = [
+        SessionTokenAuthentication,
+        WeniOIDCAuthentication,
+    ]
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        project = request.weni_session.projeto
-        user = request.weni_session.user
+        if isinstance(request.auth, SessionContext):
+            project = request.auth.projeto
+            user = request.user.email
+        else:
+            project = request.query_params.get("project_uuid")
+            user = request.user.email
         return Response({"project": project, "user": user})
 ```
 
-Clients must send the hash via `Authorization: Bearer <hash>`. Invalid or expired tokens receive `403 Forbidden` before the view handler runs.
+Place `SessionTokenAuthentication` **before** JWT/OIDC classes so opaque session hashes fall through to Redis first and JWT tokens are handled by the next authenticator.
+
+When the session hash is invalid or missing, the class returns `None` and DRF tries the next authentication backend instead of blocking the request immediately.
+
+Session data is available on `request.auth` as a `SessionContext`. The authenticated user email is on `request.user.email`.
 
 Optional setting: `WENI_SESSION_TOKEN_REDIS_ALIAS` (default `"default"`) to select the Redis cache alias.
 
