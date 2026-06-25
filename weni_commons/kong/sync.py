@@ -23,49 +23,68 @@ logger = logging.getLogger(__name__)
 def discover_routes(suffix: str = ".json") -> List[Dict]:
     """
     Walks Django's URL resolver and returns all views decorated with
-    @kong_expose whose URL pattern ends with ``suffix``.
+    @kong_expose, resolving each to a concrete gateway path.
+
+    Paths are resolved with ``reverse()`` rather than by parsing the raw
+    pattern string. This works with both clean ``RoutePattern`` URLs and
+    regex ``url()``/``re_path()`` entries that use DRF's
+    ``format_suffix_patterns`` (e.g. ``events\\.(?P<format>(json|api))``).
 
     The Kong path for each route is built as:
-        {KONG_URL_PREFIX}/{django_url_pattern}
+        {KONG_URL_PREFIX}{reverse(name, format=json)}
 
     Raises:
         KeyError: if KONG_URL_PREFIX is not set in the environment.
     """
     url_prefix = os.environ["KONG_URL_PREFIX"].rstrip("/")
+    fmt = suffix.lstrip(".")
 
-    from django.urls import URLPattern, URLResolver, get_resolver
+    from django.urls import NoReverseMatch, URLPattern, URLResolver, get_resolver, reverse
 
-    routes: List[Dict] = []
+    # Collect one view class per named route that opts in via @kong_expose.
+    exposed: Dict[str, object] = {}
 
-    def walk(resolver: URLResolver, prefix: str = "") -> None:
+    def walk(resolver: "URLResolver") -> None:
         for pattern in resolver.url_patterns:
             if isinstance(pattern, URLResolver):
-                walk(pattern, prefix + str(pattern.pattern))
+                walk(pattern)
             elif isinstance(pattern, URLPattern):
-                full_path = prefix + str(pattern.pattern)
-                if not full_path.endswith(suffix):
-                    continue
                 view_class = getattr(pattern.callback, "view_class", None)
                 if not view_class or not getattr(view_class, "_kong_expose", False):
                     continue
-
-                kong_path = url_prefix + "/" + full_path.lstrip("/")
-                route_name = (
-                    "allow-"
-                    + full_path.replace("/", "-").replace(".", "-").strip("-")
-                )
-                routes.append(
-                    {
-                        "name": route_name,
-                        "paths": [kong_path],
-                        "methods": view_class._kong_methods,
-                        "service": view_class._kong_service,
-                        "strip_path": True,
-                    }
-                )
-                logger.debug("discover_routes: found %s -> %s", route_name, kong_path)
+                if not pattern.name or pattern.name in exposed:
+                    continue
+                exposed[pattern.name] = view_class
 
     walk(get_resolver())
+
+    routes: List[Dict] = []
+    for name, view_class in exposed.items():
+        path = None
+        # Prefer the format-suffixed URL (…/events.json); fall back to the
+        # bare URL with the suffix appended.
+        try:
+            path = reverse(name, kwargs={"format": fmt})
+        except NoReverseMatch:
+            try:
+                path = reverse(name).rstrip("/") + suffix
+            except NoReverseMatch:
+                logger.warning("discover_routes: could not reverse %s — skipping", name)
+                continue
+
+        kong_path = url_prefix + "/" + path.lstrip("/")
+        route_name = "allow-" + path.strip("/").replace("/", "-").replace(".", "-")
+        routes.append(
+            {
+                "name": route_name,
+                "paths": [kong_path],
+                "methods": view_class._kong_methods,
+                "service": view_class._kong_service,
+                "strip_path": True,
+            }
+        )
+        logger.debug("discover_routes: found %s -> %s", route_name, kong_path)
+
     logger.info("discover_routes: %d route(s) discovered", len(routes))
     return routes
 
