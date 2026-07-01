@@ -2,7 +2,7 @@ CACHE_KEY_TEMPLATE = "auth:session-token:{hash}"
 
 DYNAMODB_PARTITION_KEY = "token_hash"
 
-MAX_REDIS_TTL_SECONDS = 86400
+MAX_REDIS_TTL_SECONDS = 3600
 
 # Shared DynamoDB table for session tokens. The region is the same across
 # environments; the table name differs per environment and must be set per
