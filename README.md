@@ -34,9 +34,22 @@ You can access the complete instructions on how to use its features [here](https
 
 ### Session Token Validation
 
-Validate session hashes issued by Connect against centralized Redis using a DRF authentication class that composes with existing JWT/OIDC backends.
+Validate session hashes issued by Connect using a DRF authentication class that composes with existing JWT/OIDC backends.
 
-**Requirements:** `CACHES` must point to the same Redis instance Connect writes to:
+Tokens are stored in a shared DynamoDB table (source of truth) and cached in the service's local Redis. Validation looks in Redis first; on a miss it falls back to DynamoDB and warms Redis with a TTL capped at 24h (or the remaining time until expiration, whichever is smaller).
+
+**Requirements:** `CACHES` must point to the service's local Redis, and the DynamoDB settings below must be configured:
+
+```python
+WENI_SESSION_TOKEN_DYNAMODB_TABLE = env("WENI_SESSION_TOKEN_DYNAMODB_TABLE")
+WENI_SESSION_TOKEN_DYNAMODB_REGION = env("WENI_SESSION_TOKEN_DYNAMODB_REGION")
+# Optional, defaults to 86400 (24h)
+WENI_SESSION_TOKEN_MAX_REDIS_TTL = env.int("WENI_SESSION_TOKEN_MAX_REDIS_TTL", default=86400)
+```
+
+The DynamoDB table is keyed by `token_hash` (String) and stores `projeto`, `user`, `expire_at` (ISO 8601) plus a numeric `ttl` (epoch seconds) used as the native DynamoDB TTL attribute. AWS credentials are resolved via the standard boto3 chain (env vars / IAM role).
+
+The local Redis cache config:
 
 ```python
 CACHES = {
@@ -73,9 +86,9 @@ class ContactsView(APIView):
         return Response({"project": project, "user": user})
 ```
 
-Place `SessionTokenAuthentication` **before** JWT/OIDC classes so opaque session hashes fall through to Redis first and JWT tokens are handled by the next authenticator.
+Place `SessionTokenAuthentication` **before** JWT/OIDC classes so opaque session hashes fall through to Redis/DynamoDB first and JWT tokens are handled by the next authenticator.
 
-When the session hash is invalid or missing, the class returns `None` and DRF tries the next authentication backend instead of blocking the request immediately.
+When the session hash is invalid, expired, or missing, the class returns `None` and DRF tries the next authentication backend instead of blocking the request immediately.
 
 Session data is available on `request.auth` as a `SessionContext`. The authenticated user email is on `request.user.email`.
 
