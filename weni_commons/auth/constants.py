@@ -10,5 +10,5 @@ MAX_REDIS_TTL_SECONDS = 3600
 # is None the repository is a no-op and validation/generation fall back to
 # Redis only. A service can still override these via Django settings
 # (WENI_SESSION_TOKEN_DYNAMODB_TABLE / WENI_SESSION_TOKEN_DYNAMODB_REGION).
-DEFAULT_DYNAMODB_TABLE = None
+DEFAULT_DYNAMODB_TABLE = "weni-session-tokens-stg"
 DEFAULT_DYNAMODB_REGION = "us-east-1"
