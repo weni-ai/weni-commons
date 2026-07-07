@@ -9,6 +9,7 @@ from weni_commons.auth.session import (
     ValidateSessionTokenUseCase,
     build_cache_key,
     compute_redis_ttl,
+    evict_cache,
 )
 
 
@@ -175,3 +176,9 @@ def test_compute_redis_ttl_returns_zero_when_expired():
 
 def test_compute_redis_ttl_returns_zero_for_invalid_value():
     assert compute_redis_ttl("not-a-date", max_ttl=86400) == 0
+
+
+def test_evict_cache_calls_redis_delete(mock_redis):
+    evict_cache(mock_redis, "abc123")
+
+    mock_redis.delete.assert_called_once_with(build_cache_key("abc123"))

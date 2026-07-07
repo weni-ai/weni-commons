@@ -9,6 +9,7 @@ from weni_commons.auth.session import (
     ValidateSessionTokenUseCase,
     build_cache_key,
     compute_redis_ttl,
+    evict_cache,
     warm_cache,
 )
 
@@ -20,6 +21,7 @@ __all__ = [
     "ValidateSessionTokenUseCase",
     "build_cache_key",
     "compute_redis_ttl",
+    "evict_cache",
     "extract_bearer_token",
     "warm_cache",
 ]

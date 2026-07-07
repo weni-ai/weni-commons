@@ -92,3 +92,9 @@ class DynamoDBSessionTokenRepository:
             item["ttl"] = epoch
 
         self._get_table().put_item(Item=item)
+
+    def delete(self, token_hash: str) -> None:
+        if not token_hash or not self._table_name:
+            return
+
+        self._get_table().delete_item(Key={DYNAMODB_PARTITION_KEY: token_hash})
