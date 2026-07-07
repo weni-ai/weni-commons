@@ -83,3 +83,29 @@ def test_put_skips_without_table_name():
     repo.put("abc", "p", "u", "2026-06-10T12:00:00+00:00")
 
     table.put_item.assert_not_called()
+
+
+def test_delete_removes_item():
+    repo, table = _repo_with_table()
+
+    repo.delete("abc")
+
+    table.delete_item.assert_called_once_with(Key={"token_hash": "abc"})
+
+
+@patch("weni_commons.auth.dynamodb.DEFAULT_DYNAMODB_TABLE", None)
+def test_delete_skips_without_table_name():
+    table = MagicMock()
+    repo = DynamoDBSessionTokenRepository(table=table, table_name=None)
+
+    repo.delete("abc")
+
+    table.delete_item.assert_not_called()
+
+
+def test_delete_skips_for_empty_hash():
+    repo, table = _repo_with_table()
+
+    repo.delete("")
+
+    table.delete_item.assert_not_called()

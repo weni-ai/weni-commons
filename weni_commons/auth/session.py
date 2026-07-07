@@ -53,6 +53,10 @@ def warm_cache(redis_connection, token_hash: str, payload: dict, ttl: int) -> No
     )
 
 
+def evict_cache(redis_connection, token_hash: str) -> None:
+    redis_connection.delete(build_cache_key(token_hash))
+
+
 @dataclass(frozen=True)
 class SessionContext:
     projeto: str
