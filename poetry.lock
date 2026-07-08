@@ -584,6 +584,20 @@ files = [
 ]
 
 [[package]]
+name = "cron-descriptor"
+version = "1.4.5"
+description = "A Python library that converts cron expressions into human readable strings."
+optional = false
+python-versions = "*"
+files = [
+    {file = "cron_descriptor-1.4.5-py3-none-any.whl", hash = "sha256:736b3ae9d1a99bc3dbfc5b55b5e6e7c12031e7ba5de716625772f8b02dcd6013"},
+    {file = "cron_descriptor-1.4.5.tar.gz", hash = "sha256:f51ce4ffc1d1f2816939add8524f206c376a42c87a5fca3091ce26725b3b1bca"},
+]
+
+[package.extras]
+dev = ["polib"]
+
+[[package]]
 name = "cryptography"
 version = "43.0.3"
 description = "cryptography is a package which provides cryptographic recipes and primitives to Python developers."
@@ -654,6 +668,26 @@ argon2 = ["argon2-cffi (>=19.1.0)"]
 bcrypt = ["bcrypt"]
 
 [[package]]
+name = "django-celery-beat"
+version = "2.9.0"
+description = "Database-backed Periodic Tasks."
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "django_celery_beat-2.9.0-py3-none-any.whl", hash = "sha256:4a9e5ebe26d6f8d7215e1fc5c46e466016279dc102435a28141108649bdf2157"},
+    {file = "django_celery_beat-2.9.0.tar.gz", hash = "sha256:92404650f52fcb44cf08e2b09635cb1558327c54b1a5d570f0e2d3a22130934c"},
+]
+
+[package.dependencies]
+"backports.zoneinfo" = {version = "*", markers = "python_version < \"3.9\""}
+celery = ">=5.2.3,<6.0"
+cron-descriptor = ">=1.2.32,<2.0.0"
+Django = ">=2.2,<6.1"
+django-timezone-field = ">=5.0"
+python-crontab = ">=2.3.4"
+tzdata = "*"
+
+[[package]]
 name = "django-redis"
 version = "5.4.0"
 description = "Full featured redis cache backend for Django."
@@ -670,6 +704,21 @@ redis = ">=3,<4.0.0 || >4.0.0,<4.0.1 || >4.0.1"
 
 [package.extras]
 hiredis = ["redis[hiredis] (>=3,!=4.0.0,!=4.0.1)"]
+
+[[package]]
+name = "django-timezone-field"
+version = "7.2.2"
+description = "A Django app providing DB, form, and REST framework fields for zoneinfo and pytz timezone objects."
+optional = false
+python-versions = "<4.0,>=3.8"
+files = [
+    {file = "django_timezone_field-7.2.2-py3-none-any.whl", hash = "sha256:30354d0f37462a0b9b5c289e271580a6be9b58dea30e7bf88435372882c8fa7a"},
+    {file = "django_timezone_field-7.2.2.tar.gz", hash = "sha256:a004d0b19fe10bf5964cb21a65b36324b16a61879e4711c0dafdf8d6253e8ebc"},
+]
+
+[package.dependencies]
+"backports.zoneinfo" = {version = ">=0.2.1,<0.3.0", markers = "python_version < \"3.9\""}
+Django = ">=4.2,<6.2"
 
 [[package]]
 name = "djangorestframework"
@@ -1102,6 +1151,21 @@ files = [
 ]
 
 [[package]]
+name = "python-crontab"
+version = "3.3.0"
+description = "Python Crontab API"
+optional = false
+python-versions = "*"
+files = [
+    {file = "python_crontab-3.3.0-py3-none-any.whl", hash = "sha256:739a778b1a771379b75654e53fd4df58e5c63a9279a63b5dfe44c0fcc3ee7884"},
+    {file = "python_crontab-3.3.0.tar.gz", hash = "sha256:007c8aee68dddf3e04ec4dce0fac124b93bd68be7470fc95d2a9617a15de291b"},
+]
+
+[package.extras]
+cron-description = ["cron-descriptor"]
+cron-schedule = ["croniter"]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 description = "Extensions to the standard Python datetime module"
@@ -1258,18 +1322,19 @@ amqp = ">=5.2.0,<6.0.0"
 
 [[package]]
 name = "weni-feature-flags"
-version = "2.1.2"
+version = "2.2.0"
 description = "Weni's feature flags SDK for Python backends"
 optional = false
 python-versions = "<4.0,>=3.8"
 files = [
-    {file = "weni_feature_flags-2.1.2-py3-none-any.whl", hash = "sha256:ce8ef0b8b0a78fa75c2399469b6deaeb4518cc4568b85111663080992536a3c4"},
-    {file = "weni_feature_flags-2.1.2.tar.gz", hash = "sha256:f38544ab5a8ec08d6257127769c2aa7dc64c709c75ffe613be82188aa29f7404"},
+    {file = "weni_feature_flags-2.2.0-py3-none-any.whl", hash = "sha256:a3d1898fa4992eca979261978d3db996973adff23a7cf98a75d5a22f73ba6b83"},
+    {file = "weni_feature_flags-2.2.0.tar.gz", hash = "sha256:145bfe816354bed204dd5efb4981cf1b4ec8df31d058740a669a8f400b8215d1"},
 ]
 
 [package.dependencies]
 celery = ">=5.0.0,<6.0"
 django = ">=3.2.22,<6.0"
+django-celery-beat = ">=2.5.0,<3.0"
 django-redis = ">=4.0.0,<=6.0"
 djangorestframework = ">=3.12.0,<4.0"
 growthbook = ">=1.0.0,<2.0"
@@ -1390,4 +1455,4 @@ propcache = ">=0.2.0"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.8,<4.0"
-content-hash = "7b07edc52606bbfff5d3e1a4da0880d5284db7482d17400172c7f06f270e145d"
+content-hash = "7bc1e3794cb8ee918f0b3cd110d2b9f2b9122f5385d122306caaef20f9c920dd"
