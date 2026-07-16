@@ -3,7 +3,7 @@ profile = "black"
 
 [tool.poetry]
 name = "weni-commons"
-version = "1.3.1a1"
+version = "1.3.2a0"
 description = "Weni's common utilities for Python backends"
 authors = ["Kallil Souza dos Santos <kallilsouza@hotmail.com>"]
 readme = "README.md"

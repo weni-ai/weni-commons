@@ -4,6 +4,12 @@ Management command: kong_sync
 Discovers all views decorated with @kong_expose in the project's URL
 configuration and registers them as routes in Kong via the Admin API.
 
+Client URLs keep the service prefix:
+    {KONG_URL_PREFIX}/api/v2/contacts.json   e.g. /flows/api/v2/contacts.json
+
+Upstream requests are rewritten to the Django path (prefix removed) via a
+request-transformer plugin on each allow-route.
+
 Required setup:
     - Add "weni_commons" to INSTALLED_APPS so Django discovers this command.
     - Set KONG_URL_PREFIX in the environment (e.g. /flows, /nexus).
@@ -81,7 +87,8 @@ class Command(BaseCommand):
             self.stdout.write(f"\nDry run — {len(routes)} route(s) discovered:\n")
             for route in routes:
                 self.stdout.write(
-                    f"  {route['name']:<50} {route['paths']}  {route['methods']}"
+                    f"  {route['name']:<50} gateway={route['paths']}  "
+                    f"upstream={route['upstream_uri']}  {route['methods']}"
                 )
             self.stdout.write("")
             return
@@ -91,20 +98,20 @@ class Command(BaseCommand):
             f"(service: {options['service']}) ...\n"
         )
 
-        created = sync_to_kong(
+        created, updated = sync_to_kong(
             admin_url=options["kong_addr"],
             service=options["service"],
             routes=routes,
         )
 
-        skipped = len(routes) - len(created)
-
         for name in created:
             self.stdout.write(f"  created  {name}")
+        for name in updated:
+            self.stdout.write(f"  updated  {name}")
 
         self.stdout.write("")
         self.stdout.write(
             self.style.SUCCESS(
-                f"Done. {len(created)} created, {skipped} already existed."
+                f"Done. {len(created)} created, {len(updated)} updated."
             )
         )
