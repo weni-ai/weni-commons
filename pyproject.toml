@@ -15,8 +15,18 @@ django = ">=3.2.22,<6.0"
 djangorestframework = ">=3.12.0,<4.0"
 django-redis = ">=4.0.0,<=6.0"
 celery = ">=5.0.0,<6.0"
+mozilla-django-oidc = ">=2.0.0,<5.0"
+pyjwt = ">=2.8.0,<3.0"
 weni-feature-flags = "^2.2.0"
 weni-eda = "^0.1.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.0"
+pytest-django = "^4.9.0"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "tests.settings"
+python_files = ["test_*.py"]
 
 [build-system]
 requires = ["poetry-core"]

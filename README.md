@@ -32,6 +32,18 @@ feature_service = FeatureFlagsService()
 
 You can access the complete instructions on how to use its features [here](https://github.com/weni-ai/weni-feature-flags/blob/main/README.md).
 
+### Authentication and Permissions
+
+Unified DRF authentication for App IO JWTs and Keycloak tokens. A single
+`WeniAuthentication` class validates a Weni JWT first and falls back to Keycloak
+(OIDC), exposing a `WeniAuthContext` on `request.auth`.
+
+```python
+from weni_commons.auth import WeniAuthentication
+```
+
+See the full usage guide in [`weni_commons/auth/README.md`](weni_commons/auth/README.md).
+
 ## Requirements
 
 - Python >= 3.8
