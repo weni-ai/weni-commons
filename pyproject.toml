@@ -3,7 +3,7 @@ profile = "black"
 
 [tool.poetry]
 name = "weni-commons"
-version = "1.3.2a3"
+version = "1.3.2a4"
 description = "Weni's common utilities for Python backends"
 authors = ["Kallil Souza dos Santos <kallilsouza@hotmail.com>"]
 readme = "README.md"
@@ -19,6 +19,7 @@ weni-feature-flags = "^2.2.0"
 # Allow 0.2.x (e.g. flows staging uses 0.2.0a10); ^0.1.2 rejected those.
 weni-eda = ">=0.1.2,<0.3.0"
 requests = ">=2.25.0"
+boto3 = ">=1.18.0,<2.0.0"
 
 [build-system]
 requires = ["poetry-core"]
