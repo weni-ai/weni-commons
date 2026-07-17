@@ -1,9 +1,13 @@
+import logging
 from typing import Optional
 
 from rest_framework import HTTP_HEADER_ENCODING
 from rest_framework.authentication import BaseAuthentication, get_authorization_header
 
+from weni_commons.auth.resolve import resolve_session_user
 from weni_commons.auth.session import ValidateSessionTokenUseCase
+
+logger = logging.getLogger(__name__)
 
 
 def extract_bearer_token(request) -> Optional[str]:
@@ -35,10 +39,14 @@ class SessionUser:
 
 class SessionTokenAuthentication(BaseAuthentication):
     """
-    DRF authentication backend for Connect session hashes stored in Redis.
+    DRF authentication backend for Connect session hashes stored in Redis/DynamoDB.
 
     Expects Authorization: Bearer <hash>. Returns None when the token is missing,
-    invalid, or expired so other authentication classes can run afterward.
+    invalid, expired, or when the store lookup fails, so other authentication
+    classes can run afterward.
+
+    When ``WENI_SESSION_TOKEN_ORG_MODEL`` is configured, the authenticated user is
+    a real Django user with org attached (see ``resolve_session_user``).
     """
 
     www_authenticate_realm = "api"
@@ -48,11 +56,23 @@ class SessionTokenAuthentication(BaseAuthentication):
         if not token_hash:
             return None
 
-        session = ValidateSessionTokenUseCase().execute(token_hash)
+        try:
+            session = ValidateSessionTokenUseCase().execute(token_hash)
+        except Exception:
+            # DynamoDB/Redis misconfig must not take down the API with a 500.
+            logger.exception("Session token validation failed for Bearer token")
+            return None
+
         if session is None:
             return None
 
-        return (SessionUser(email=session.user), session)
+        try:
+            user = resolve_session_user(request, session)
+        except Exception:
+            logger.exception("Session user resolution failed for Bearer token")
+            return None
+
+        return (user, session)
 
     def authenticate_header(self, request):
         return 'Bearer realm="api"'
