@@ -1,48 +1,24 @@
-from weni_commons.auth import (
-    CanCommunicateInternally,
-    HasProjectPermission,
-    IsWeniAuthenticated,
-    PermissionLevel,
-    UserPermissionsServiceInterface,
-    WeniAuthContext,
-    WeniAuthUser,
-    WeniAuthentication,
-    WeniAuthViewMixin,
-    WENI_AUTH_HEADER,
-    extract_token,
-    get_account_id,
-    get_auth_context,
-    get_project_uuid,
-    get_user_email,
-    get_vtex_account,
-    is_internal_request,
-)
+"""
+weni-commons — shared utilities for Weni Python backends.
 
-__all__ = [
-    "CanCommunicateInternally",
-    "HasProjectPermission",
-    "IsWeniAuthenticated",
-    "PermissionLevel",
-    "UserPermissionsServiceInterface",
-    "WeniAuthContext",
-    "WeniAuthUser",
-    "WeniAuthentication",
-    "WeniAuthViewMixin",
-    "WENI_AUTH_HEADER",
-    "extract_token",
-    "get_account_id",
-    "get_auth_context",
-    "get_project_uuid",
-    "get_user_email",
-    "get_vtex_account",
-    "is_internal_request",
-]
+``FeatureFlagsService`` is re-exported lazily so that importing lightweight
+submodules (e.g. ``weni_commons.kong``) does not pull in the feature-flags
+stack, which requires extra Django settings and an installed app. The heavy
+import only happens when ``weni_commons.FeatureFlagsService`` is actually
+accessed.
+"""
+
+__all__ = ["FeatureFlagsService"]
 
 
-def __getattr__(name: str):
+def __getattr__(name):
     if name == "FeatureFlagsService":
         from weni.feature_flags.services import FeatureFlagsService
 
         return FeatureFlagsService
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(list(globals().keys()) + __all__)
