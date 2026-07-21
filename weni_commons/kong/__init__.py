@@ -1,4 +1,12 @@
-from weni_commons.kong.decorator import kong_expose
+from weni_commons.kong.decorator import api_gateway_expose, kong_expose
+from weni_commons.kong.service import ensure_default_block, ensure_service
 from weni_commons.kong.sync import discover_routes, sync_to_kong
 
-__all__ = ["kong_expose", "discover_routes", "sync_to_kong"]
+__all__ = [
+    "api_gateway_expose",
+    "kong_expose",
+    "discover_routes",
+    "sync_to_kong",
+    "ensure_service",
+    "ensure_default_block",
+]
