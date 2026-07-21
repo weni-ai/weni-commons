@@ -170,15 +170,16 @@ POST /api/webchat/activate/
 X-Weni-Auth: eyJhbGciOiJSUzI1NiIs...
 Content-Type: application/json
 
-{"app_uuid": "...", "account_id": "..."}
+{"app_uuid": "..."}
 ```
 
 ```jsonc
-// decoded JWT payload
-{ "vtex_account": "mystore", "user_email": "user@weni.ai" }
+// decoded JWT payload — tenant and account_id come from the token, not the body
+{ "vtex_account": "mystore", "account_id": "acc-123", "user_email": "user@weni.ai" }
 ```
 
-Result: `self.auth.is_jwt is True`, `self.auth.vtex_account == "mystore"`.
+Result: `self.auth.is_jwt is True`, `self.auth.vtex_account == "mystore"`,
+`self.auth.account_id == "acc-123"`.
 
 **Keycloak (browser/session)** — token in `Authorization: Bearer`, tenant taken
 from the request in a standardized location (any of the forms below is valid):
@@ -208,11 +209,16 @@ POST /api/webchat/activate/
 Authorization: Bearer <keycloak-access-token>
 Content-Type: application/json
 
-{"vtex_account": "mystore", "app_uuid": "...", "account_id": "..."}
+{"vtex_account": "mystore", "app_uuid": "..."}
 ```
 
 Result: `self.auth.is_keycloak is True`, `self.auth.vtex_account == "mystore"`
 (resolved from the request), `self.auth.user_email` from the Keycloak token.
+
+Note: `account_id` is **not** resolved from the request for Keycloak callers —
+it comes only from the token claims (`account_id` / `accountId`). A body/query
+`account_id` is ignored, so `self.auth.account_id` raises `400` unless the claim
+is present.
 
 ## When it is not a good fit
 
