@@ -2,7 +2,7 @@
 Route discovery and Kong Admin API sync.
 
 discover_routes() walks Django's URL resolver to find all views marked with
-@kong_expose whose URL pattern ends with the given suffix (default: .json).
+@api_gateway_expose, resolving each to a concrete gateway path.
 
 sync_to_kong() applies the discovered routes to Kong via the Admin API.
 Both functions require Kong running in DB mode (with PostgreSQL). DB-less
@@ -14,6 +14,10 @@ Required environment variable:
 Gateway URLs keep the service prefix (client-facing):
     {KONG_URL_PREFIX}{django_path}   e.g. /flows/api/v2/contacts.json
 
+When a view sets ``alias`` on @api_gateway_expose, an additional short path
+is also registered:
+    {KONG_URL_PREFIX}/{alias}        e.g. /flows/events
+
 Upstream URIs drop only that prefix (via request-transformer):
     {django_path}                    e.g. /api/v2/contacts.json
 
@@ -22,7 +26,7 @@ Upstream URIs drop only that prefix (via request-transformer):
 """
 import logging
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Tuple
 
 import requests as http
 
@@ -34,7 +38,7 @@ REQUEST_TRANSFORMER_PLUGIN = "request-transformer"
 def discover_routes(suffix: str = ".json") -> List[Dict]:
     """
     Walks Django's URL resolver and returns all views decorated with
-    @kong_expose, resolving each to a concrete gateway path.
+    @api_gateway_expose, resolving each to a concrete gateway path.
 
     Paths are resolved with ``reverse()`` rather than by parsing the raw
     pattern string. This works with both clean ``RoutePattern`` URLs and
@@ -44,6 +48,9 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
     The Kong path for each route is built as:
         {KONG_URL_PREFIX}{reverse(name, format=json)}
 
+    If the view defines ``_kong_alias``, an additional short path
+    ``{KONG_URL_PREFIX}/{alias}`` is included in the same route.
+
     Raises:
         KeyError: if KONG_URL_PREFIX is not set in the environment.
     """
@@ -52,7 +59,7 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
 
     from django.urls import NoReverseMatch, URLPattern, URLResolver, get_resolver, reverse
 
-    # Collect one view class per named route that opts in via @kong_expose.
+    # Collect one view class per named route that opts in via @api_gateway_expose.
     exposed: Dict[str, object] = {}
 
     def walk(resolver: "URLResolver") -> None:
@@ -70,6 +77,8 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
     walk(get_resolver())
 
     routes: List[Dict] = []
+    seen_aliases: Set[str] = set()
+
     for name, view_class in exposed.items():
         path = None
         # Prefer the format-suffixed URL (…/events.json); fall back to the
@@ -84,12 +93,27 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
                 continue
 
         upstream_uri = "/" + path.lstrip("/")
-        kong_path = url_prefix + upstream_uri
+        full_gateway_path = url_prefix + upstream_uri
+        paths = [full_gateway_path]
+
+        alias = getattr(view_class, "_kong_alias", None)
+        if alias:
+            if alias in seen_aliases:
+                logger.warning(
+                    "discover_routes: duplicate alias %r on %s — "
+                    "keeping full path only for this view",
+                    alias,
+                    getattr(view_class, "__name__", name),
+                )
+            else:
+                seen_aliases.add(alias)
+                paths.insert(0, f"{url_prefix}/{alias}")
+
         route_name = "allow-" + path.strip("/").replace("/", "-").replace(".", "-")
         routes.append(
             {
                 "name": route_name,
-                "paths": [kong_path],
+                "paths": paths,
                 "methods": view_class._kong_methods,
                 "service": view_class._kong_service,
                 "strip_path": False,
@@ -99,7 +123,7 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
         logger.debug(
             "discover_routes: found %s -> %s (upstream %s)",
             route_name,
-            kong_path,
+            paths,
             upstream_uri,
         )
 
