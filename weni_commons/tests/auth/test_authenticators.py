@@ -10,12 +10,43 @@ from django.test import TestCase, override_settings
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.test import APIRequestFactory
 
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
 from weni_commons.auth.authenticators import WeniAuthentication
 from weni_commons.auth.context import WeniAuthContext, WeniAuthUser
+from weni_commons.auth.permissions import IsWeniAuthenticated
 from weni_commons.auth import WENI_AUTH_HEADER
 from tests.backends import TestOIDCAuthenticationBackend
 
 User = get_user_model()
+
+
+class _ProtectedView(APIView):
+    """Minimal protected view to assert the 401-vs-403 auth contract."""
+
+    authentication_classes = [WeniAuthentication]
+    permission_classes = [IsWeniAuthenticated]
+
+    def get(self, request):
+        return Response({"ok": True})
+
+
+class _DenyAllPermission(IsWeniAuthenticated):
+    """Authenticated but always denied, to assert 403 is preserved."""
+
+    def has_permission(self, request, view):
+        return False
+
+
+class _ForbiddenView(APIView):
+    """View that authenticates the caller but denies permission."""
+
+    authentication_classes = [WeniAuthentication]
+    permission_classes = [_DenyAllPermission]
+
+    def get(self, request):
+        return Response({"ok": True})
 
 
 class WeniAuthenticationTestCase(TestCase):
@@ -50,6 +81,58 @@ class WeniAuthenticationTestCase(TestCase):
         request.headers = {}
 
         self.assertIsNone(self.auth.authenticate(request))
+
+    def test_authenticate_header_is_non_empty_to_keep_401(self):
+        self.assertTrue(self.auth.authenticate_header(self.factory.get("/")))
+
+    def test_missing_token_returns_401_not_403(self):
+        response = _ProtectedView.as_view()(self.factory.get("/"))
+
+        self.assertEqual(response.status_code, 401)
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_expired_token_returns_401_not_403(self, mock_jwt_decode):
+        mock_jwt_decode.side_effect = jwt.ExpiredSignatureError("expired")
+
+        request = self.factory.get("/", HTTP_X_WENI_AUTH="expired-jwt")
+        response = _ProtectedView.as_view()(request)
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_invalid_token_returns_401_not_403(self):
+        TestOIDCAuthenticationBackend.should_fail = True
+
+        request = self.factory.get("/", HTTP_X_WENI_AUTH="not-a-valid-jwt")
+        response = _ProtectedView.as_view()(request)
+
+        self.assertEqual(response.status_code, 401)
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_authenticated_without_permission_returns_403(self, mock_jwt_decode):
+        mock_jwt_decode.return_value = {
+            "project_uuid": "project-123",
+            "user_email": "user@example.com",
+        }
+
+        request = self.factory.get("/", HTTP_X_WENI_AUTH="valid-jwt")
+        response = _ForbiddenView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_authenticated_and_authorized_returns_200(self, mock_jwt_decode):
+        mock_jwt_decode.return_value = {
+            "project_uuid": "project-123",
+            "user_email": "user@example.com",
+        }
+
+        request = self.factory.get("/", HTTP_X_WENI_AUTH="valid-jwt")
+        response = _ProtectedView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
 
     @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
     @patch("weni_commons.auth.authenticators.jwt.decode")

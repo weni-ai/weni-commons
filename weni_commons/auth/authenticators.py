@@ -100,6 +100,23 @@ class WeniAuthentication(BaseAuthentication):
 
         return self._authenticate_with_keycloak(request, token)
 
+    def authenticate_header(self, request: Request) -> str:
+        """Return the ``WWW-Authenticate`` header value for failed auth.
+
+        DRF only keeps the ``401 Unauthorized`` status for
+        ``NotAuthenticated`` / ``AuthenticationFailed`` when the primary
+        authenticator exposes a header value here; otherwise it downgrades the
+        response to ``403 Forbidden``. Returning a non-empty value preserves
+        the expected ``401`` for missing, invalid, or expired tokens.
+
+        Args:
+            request: The incoming DRF request (unused).
+
+        Returns:
+            The authentication scheme advertised to clients.
+        """
+        return "Bearer"
+
     def _try_jwt_authentication(self, token: str) -> Optional[WeniAuthContext]:
         """Attempt to validate the token as a Weni JWT.
 
