@@ -27,7 +27,7 @@ class DynamoDBSessionTokenRepository:
     """
     Repository for session tokens stored in a shared DynamoDB table.
 
-    The table is keyed by ``token_hash`` and stores ``projeto``, ``user`` and
+    The table is keyed by ``token_hash`` and stores ``project``, ``user`` and
     ``expire_at`` (ISO 8601). A numeric ``ttl`` attribute (epoch seconds) is
     written so DynamoDB can expire stale items natively.
     """
@@ -61,28 +61,28 @@ class DynamoDBSessionTokenRepository:
         if not item:
             return None
 
-        projeto = item.get("projeto")
+        project = item.get("project")
         user = item.get("user")
         expire_at = item.get("expire_at")
 
-        if not projeto or not user or not expire_at:
+        if not project or not user or not expire_at:
             return None
 
         return {
-            "projeto": str(projeto),
+            "project": str(project),
             "user": str(user),
             "expire_at": str(expire_at),
         }
 
     def put(
-        self, token_hash: str, projeto: str, user: str, expire_at: str
+        self, token_hash: str, project: str, user: str, expire_at: str
     ) -> None:
         if not token_hash or not self._table_name:
             return
 
         item = {
             DYNAMODB_PARTITION_KEY: token_hash,
-            "projeto": str(projeto),
+            "project": str(project),
             "user": str(user),
             "expire_at": str(expire_at),
         }
