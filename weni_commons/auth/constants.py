@@ -21,6 +21,14 @@ JWT_DECODE_OPTIONS = {"verify_aud": False}
 PROJECT_UUID_REQUEST_KEYS = ("project_uuid", "project")
 VTEX_ACCOUNT_REQUEST_KEYS = ("vtex_account",)
 
+# Standardized request keys used to resolve the acting user's email for internal
+# Keycloak callers. An internal (service-to-service) token carries the service
+# account, not the end user, so the real user is passed in the request by the
+# calling module (e.g. App IO via "?user="). Matched with the same case- and
+# separator-insensitive rules as the tenant keys above. Non-internal callers
+# always read the user from the token instead, to prevent identity spoofing.
+USER_EMAIL_REQUEST_KEYS = ("user_email", "user")
+
 # Session-token authentication (Connect session hashes in Redis/DynamoDB).
 CACHE_KEY_TEMPLATE = "auth:session-token:{hash}"
 

@@ -1,7 +1,9 @@
-"""Standardized multi-source resolution of tenant identifiers.
+"""Standardized multi-source resolution of tenant identifiers and acting user.
 
 Keycloak requests do not carry tenant scope inside the token, so
 ``project_uuid`` and ``vtex_account`` must be resolved from the request itself.
+Internal Keycloak callers also carry a service account instead of the end user,
+so the acting user's email is resolved from the request as well.
 To keep every endpoint consistent — and to let a future permission class check
 project access in a uniform way — only a fixed set of key spellings is accepted,
 searched across a fixed set of locations in a fixed order:
@@ -21,6 +23,7 @@ from typing import Any, FrozenSet, Iterable, Optional
 
 from weni_commons.auth.constants import (
     PROJECT_UUID_REQUEST_KEYS,
+    USER_EMAIL_REQUEST_KEYS,
     VTEX_ACCOUNT_REQUEST_KEYS,
 )
 
@@ -134,3 +137,19 @@ def resolve_vtex_account_from_request(request: Any) -> Optional[str]:
         The VTEX account, or ``None`` when it cannot be resolved.
     """
     return resolve_from_request(request, VTEX_ACCOUNT_REQUEST_KEYS)
+
+
+def resolve_user_email_from_request(request: Any) -> Optional[str]:
+    """Resolve the acting user's email from the standardized request locations.
+
+    Used for internal (service-to-service) Keycloak callers, whose token
+    identifies the service account rather than the end user. The real user is
+    supplied by the calling module in the request (e.g. App IO via ``?user=``).
+
+    Args:
+        request: The incoming request.
+
+    Returns:
+        The user email, or ``None`` when it cannot be resolved.
+    """
+    return resolve_from_request(request, USER_EMAIL_REQUEST_KEYS)

@@ -3,6 +3,7 @@ Tests for WeniAuthentication.
 """
 
 import jwt
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
@@ -323,6 +324,60 @@ class WeniAuthenticationTestCase(TestCase):
         _, auth_context = self.auth.authenticate(request)
 
         self.assertEqual(auth_context.project_uuid, "proj-from-token")
+
+    def test_resolve_keycloak_is_internal_false_when_user_lacks_permissions(self):
+        user_without_permissions = SimpleNamespace(email="user@example.com")
+
+        self.assertFalse(
+            self.auth._resolve_keycloak_is_internal({}, user_without_permissions)
+        )
+
+    @override_settings(JWT_PUBLIC_KEY=None)
+    def test_keycloak_internal_resolves_user_from_request(self):
+        TestOIDCAuthenticationBackend.claims = {
+            "email": "internal-service@weni.ai",
+            "vtex_account": "store",
+            "can_communicate_internally": True,
+        }
+
+        request = self.factory.get("/?user=real.user@vtex.com")
+        request.headers = {"Authorization": "Bearer keycloak-token"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertTrue(auth_context.is_internal)
+        self.assertEqual(auth_context.user_email, "real.user@vtex.com")
+
+    @override_settings(JWT_PUBLIC_KEY=None)
+    def test_keycloak_internal_falls_back_to_token_user_when_request_omits_user(self):
+        TestOIDCAuthenticationBackend.claims = {
+            "email": "internal-service@weni.ai",
+            "vtex_account": "store",
+            "can_communicate_internally": True,
+        }
+
+        request = self.factory.get("/")
+        request.headers = {"Authorization": "Bearer keycloak-token"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertTrue(auth_context.is_internal)
+        self.assertEqual(auth_context.user_email, "internal-service@weni.ai")
+
+    @override_settings(JWT_PUBLIC_KEY=None)
+    def test_keycloak_non_internal_uses_token_user_ignoring_request(self):
+        TestOIDCAuthenticationBackend.claims = {
+            "email": "real.user@vtex.com",
+            "vtex_account": "store",
+        }
+
+        request = self.factory.get("/?user=spoofed@evil.com")
+        request.headers = {"Authorization": "Bearer keycloak-token"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertFalse(auth_context.is_internal)
+        self.assertEqual(auth_context.user_email, "real.user@vtex.com")
 
     @override_settings(JWT_PUBLIC_KEY=None)
     def test_keycloak_resolves_account_id_from_claims_only(self):
