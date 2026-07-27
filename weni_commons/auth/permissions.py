@@ -42,13 +42,18 @@ class CanCommunicateInternally(permissions.BasePermission):
     def has_permission(self, request: Request, view) -> bool:
         """Check that the caller is an internal service.
 
+        JWT callers are represented by
+        :class:`~weni_commons.auth.context.WeniAuthUser`, a lightweight
+        principal with no Django permissions, so for them the decision relies
+        solely on the internal claim carried by the token.
+
         Args:
             request: The DRF request.
             view: The view being accessed (unused).
 
         Returns:
             ``True`` when the auth context is internal or the Django user holds
-            the ``can_communicate_internally`` permission.
+            the ``can_communicate_internally`` permission, otherwise ``False``.
         """
         auth = request.auth
         if isinstance(auth, WeniAuthContext) and auth.is_internal:
@@ -56,6 +61,9 @@ class CanCommunicateInternally(permissions.BasePermission):
 
         user = request.user
         if not getattr(user, "is_authenticated", False):
+            return False
+
+        if not hasattr(user, "user_permissions"):
             return False
 
         return user.user_permissions.filter(
