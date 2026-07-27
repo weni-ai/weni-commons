@@ -5,13 +5,13 @@ Tests for Weni auth permission classes.
 from unittest.mock import Mock
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Permission
+from django.contrib.auth.models import AnonymousUser, Permission
 from django.contrib.contenttypes.models import ContentType
 from django.test import TestCase
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from weni_commons.auth.context import WeniAuthContext
+from weni_commons.auth.context import WeniAuthContext, WeniAuthUser
 from weni_commons.auth.permissions import (
     CanCommunicateInternally,
     HasProjectPermission,
@@ -76,6 +76,22 @@ class AuthPermissionTestCase(TestCase):
         )
 
         self.assertTrue(CanCommunicateInternally().has_permission(request, None))
+
+    def test_can_communicate_internally_false_for_non_django_user(self):
+        auth_context = WeniAuthContext(is_internal=False)
+        django_request = self.factory.get("/")
+        request = self._make_request(django_request, auth_context=auth_context)
+        request.user = WeniAuthUser(email="user@example.com")
+
+        self.assertFalse(CanCommunicateInternally().has_permission(request, None))
+
+    def test_can_communicate_internally_false_for_anonymous_user(self):
+        auth_context = WeniAuthContext(is_internal=False)
+        django_request = self.factory.get("/")
+        request = self._make_request(django_request, auth_context=auth_context)
+        request.user = AnonymousUser()
+
+        self.assertFalse(CanCommunicateInternally().has_permission(request, None))
 
     def test_has_project_permission_requires_permissions_service(self):
         auth_context = WeniAuthContext(project_uuid="project-123")
