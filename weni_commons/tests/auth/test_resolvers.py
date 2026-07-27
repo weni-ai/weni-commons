@@ -7,6 +7,7 @@ from rest_framework.test import APIRequestFactory
 
 from weni_commons.auth.resolvers import (
     resolve_project_uuid_from_request,
+    resolve_user_email_from_request,
     resolve_vtex_account_from_request,
 )
 
@@ -106,6 +107,27 @@ class ResolveVtexAccountTestCase(TestCase):
         request = _fake_request(query={"project_uuid": "proj-1"})
 
         self.assertIsNone(resolve_vtex_account_from_request(request))
+
+
+class ResolveUserEmailTestCase(TestCase):
+    def test_resolves_from_user_key(self):
+        request = _fake_request(query={"user": "real.user@vtex.com"})
+
+        self.assertEqual(
+            resolve_user_email_from_request(request), "real.user@vtex.com"
+        )
+
+    def test_resolves_from_user_email_key(self):
+        request = _fake_request(query={"user_email": "real.user@vtex.com"})
+
+        self.assertEqual(
+            resolve_user_email_from_request(request), "real.user@vtex.com"
+        )
+
+    def test_returns_none_when_absent(self):
+        request = _fake_request(query={"unrelated": "value"})
+
+        self.assertIsNone(resolve_user_email_from_request(request))
 
 
 class ResolveWithDjangoRequestTestCase(TestCase):

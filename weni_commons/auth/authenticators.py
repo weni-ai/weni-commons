@@ -25,6 +25,7 @@ from weni_commons.auth.context import (
 )
 from weni_commons.auth.resolvers import (
     resolve_project_uuid_from_request,
+    resolve_user_email_from_request,
     resolve_vtex_account_from_request,
 )
 from weni_commons.auth.token import extract_token
@@ -311,6 +312,12 @@ class WeniAuthentication(BaseAuthentication):
         The optional ``account_id`` identity claim is resolved from the token
         claims only — never from the request — to avoid spoofing.
 
+        The acting user's email depends on the caller type: internal
+        (service-to-service) tokens carry the service account, so the real user
+        is resolved from the request; regular tokens read the user from the
+        token to prevent identity spoofing. See
+        :meth:`_resolve_keycloak_user_email`.
+
         Args:
             request: The incoming request, used to resolve tenant scope.
             user: The Django user resolved by the OIDC backend.
@@ -321,10 +328,6 @@ class WeniAuthentication(BaseAuthentication):
             ``keycloak``. Tenant fields may be ``None`` when neither the token
             nor the request carries them.
         """
-        user_email = (
-            self._first_claim_value(claims, KEYCLOAK_EMAIL_CLAIMS)
-            or getattr(user, "email", None)
-        )
         project_uuid = (
             self._first_claim_value(claims, KEYCLOAK_PROJECT_UUID_CLAIMS)
             or resolve_project_uuid_from_request(request)
@@ -333,12 +336,10 @@ class WeniAuthentication(BaseAuthentication):
             self._first_claim_value(claims, KEYCLOAK_VTEX_ACCOUNT_CLAIMS)
             or resolve_vtex_account_from_request(request)
         )
-        is_internal = self._has_internal_caller_claim(claims)
-
-        if not is_internal and hasattr(user, "user_permissions"):
-            is_internal = user.user_permissions.filter(
-                codename="can_communicate_internally"
-            ).exists()
+        is_internal = self._resolve_keycloak_is_internal(claims, user)
+        user_email = self._resolve_keycloak_user_email(
+            request, claims, user, is_internal
+        )
 
         return WeniAuthContext(
             project_uuid=project_uuid,
@@ -349,6 +350,62 @@ class WeniAuthentication(BaseAuthentication):
             raw_payload=claims or None,
             account_id=self._first_claim_value(claims, KEYCLOAK_ACCOUNT_ID_CLAIMS),
         )
+
+    def _resolve_keycloak_is_internal(self, claims: Dict[str, Any], user: Any) -> bool:
+        """Determine whether a Keycloak caller is an internal service.
+
+        Args:
+            claims: The claims resolved for the request.
+            user: The Django user resolved by the OIDC backend.
+
+        Returns:
+            ``True`` when the token carries an internal-caller claim or the
+            Django user holds the ``can_communicate_internally`` permission,
+            otherwise ``False``.
+        """
+        if self._has_internal_caller_claim(claims):
+            return True
+
+        if hasattr(user, "user_permissions"):
+            return user.user_permissions.filter(
+                codename="can_communicate_internally"
+            ).exists()
+
+        return False
+
+    def _resolve_keycloak_user_email(
+        self,
+        request: Request,
+        claims: Dict[str, Any],
+        user: Any,
+        is_internal: bool,
+    ) -> Optional[str]:
+        """Resolve the acting user's email for a Keycloak caller.
+
+        Internal (service-to-service) tokens identify the service account, not
+        the end user, so the real user is read from the request's standardized
+        locations (falling back to the token only when the request omits it).
+        Regular callers always read the user from the token, so an end user
+        cannot impersonate another by passing a different user in the request.
+
+        Args:
+            request: The incoming request.
+            claims: The claims resolved for the request.
+            user: The Django user resolved by the OIDC backend.
+            is_internal: Whether the caller is an internal service.
+
+        Returns:
+            The resolved user email, or ``None`` when unavailable.
+        """
+        token_email = (
+            self._first_claim_value(claims, KEYCLOAK_EMAIL_CLAIMS)
+            or getattr(user, "email", None)
+        )
+
+        if is_internal:
+            return resolve_user_email_from_request(request) or token_email
+
+        return token_email
 
     @staticmethod
     def _first_claim_value(claims: Dict[str, Any], keys: Tuple[str, ...]) -> Optional[str]:

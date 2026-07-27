@@ -27,7 +27,10 @@ class WeniAuthContext:
     :attr:`has_account_id` for optional checks that must not raise.
 
     Attributes:
-        user_email: Email of the authenticated principal, always from the token.
+        user_email: Email of the authenticated principal. Read from the token,
+            except for internal Keycloak callers (service-to-service), whose
+            token holds the service account — for those, it is the acting user
+            resolved from the request.
         is_internal: ``True`` for service-to-service (internal) callers.
         token_type: Either ``"jwt"`` or ``"keycloak"``.
         raw_payload: The raw decoded claims, kept for advanced use cases.

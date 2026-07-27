@@ -85,7 +85,7 @@ class MyView(WeniAuthViewMixin, APIView):
 
     def post(self, request):
         vtex_account = self.auth.vtex_account       # 403 if missing (required here)
-        email = self.user_email                     # always from the token
+        email = self.user_email                     # from token; from request for internal Keycloak
         internal = self.is_internal                 # service-to-service caller?
 
         if self.auth.has_project_uuid:              # optional access
@@ -132,7 +132,7 @@ Everything is read from `request.auth` (a `WeniAuthContext`) — not an HTTP hea
 | `has_vtex_account` | `bool` | Whether a VTEX account is available (no raise) |
 | `account_id` | `str` | Optional account identity claim; **raises 400** (`ValidationError`) when accessed while absent |
 | `has_account_id` | `bool` | Whether an account id is available (no raise) |
-| `user_email` | `Optional[str]` | Authenticated principal's email (always from the token) |
+| `user_email` | `Optional[str]` | Authenticated principal's email. From the token, except for internal Keycloak callers, where it is the acting user resolved from the request (`user` / `user_email`) |
 | `is_internal` | `bool` | Service-to-service caller |
 | `token_type` | `str` | `"jwt"` or `"keycloak"` |
 | `raw_payload` | `Optional[dict]` | Raw decoded claims |
@@ -214,6 +214,10 @@ Content-Type: application/json
 
 Result: `self.auth.is_keycloak is True`, `self.auth.vtex_account == "mystore"`
 (resolved from the request), `self.auth.user_email` from the Keycloak token.
+For **internal** Keycloak callers the token identifies the service account, so
+`self.auth.user_email` is instead the acting user resolved from the request
+(`user` / `user_email`), falling back to the token only when the request omits
+it.
 
 Note: `account_id` is **not** resolved from the request for Keycloak callers —
 it comes only from the token claims (`account_id` / `accountId`). A body/query
