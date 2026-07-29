@@ -9,7 +9,7 @@ product-specific model imports:
       When unset, resolution is skipped and SessionUser is returned as-is.
 
   WENI_SESSION_TOKEN_ORG_FIELD
-      Field used to look up the org from ``session.projeto`` (default: ``proj_uuid``).
+      Field used to look up the org from ``session.project`` (default: ``proj_uuid``).
 
   WENI_SESSION_TOKEN_INTERNAL_USER_EMAIL / INTERNAL_USER_EMAIL
       Fallback user email when ``session.user`` is missing or not a member of the org.
@@ -81,7 +81,7 @@ def resolve_session_user(request, session: SessionContext):
     Falls back to ``SessionUser`` when org model settings are not configured
     or the project cannot be resolved.
     """
-    project_uuid = session.projeto
+    project_uuid = session.project
     if project_uuid:
         request.project_uuid = project_uuid
 
@@ -91,7 +91,7 @@ def resolve_session_user(request, session: SessionContext):
     org = _lookup_org(project_uuid) if project_uuid else None
     if org is None:
         logger.warning(
-            "Session token project could not be resolved (projeto=%s)",
+            "Session token project could not be resolved (project=%s)",
             project_uuid,
         )
         return _session_user(session.user)
