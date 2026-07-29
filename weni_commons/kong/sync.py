@@ -11,22 +11,26 @@ mode does not support route creation via the Admin API.
 Required environment variable:
     KONG_URL_PREFIX  — gateway path prefix for this service, e.g. /flows
 
-Gateway URLs keep the service prefix (client-facing):
+Without alias, the public path keeps the service prefix:
     {KONG_URL_PREFIX}{django_path}   e.g. /flows/api/v2/contacts.json
 
-When a view sets ``alias`` on @api_gateway_expose, an additional short path
-is also registered:
-    {KONG_URL_PREFIX}/{alias}        e.g. /flows/events
+With alias on @api_gateway_expose, three public paths are registered:
+    /{alias}                         e.g. /events          (flat, public)
+    {KONG_URL_PREFIX}/{alias}        e.g. /flows/events    (compat)
+    {KONG_URL_PREFIX}{django_path}   e.g. /flows/api/v2/events.json (compat)
 
-Upstream URIs drop only that prefix (via request-transformer):
+Upstream URIs are always the Django path (via request-transformer):
     {django_path}                    e.g. /api/v2/contacts.json
+
+Alias routes use a stable Kong name ``allow-{alias}``. Re-syncing the same
+alias from another service overwrites service + upstream (last-writer-wins).
 
 ``strip_path`` must stay false on allow-routes: with the full gateway path in
 ``paths``, ``strip_path=true`` would strip the entire match and forward ``/``.
 """
 import logging
 import os
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Tuple
 
 import requests as http
 
@@ -45,11 +49,13 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
     regex ``url()``/``re_path()`` entries that use DRF's
     ``format_suffix_patterns`` (e.g. ``events\\.(?P<format>(json|api))``).
 
-    The Kong path for each route is built as:
-        {KONG_URL_PREFIX}{reverse(name, format=json)}
+    Without ``_kong_alias``:
+        paths = [{KONG_URL_PREFIX}{django_path}]
+        route name from django path
 
-    If the view defines ``_kong_alias``, an additional short path
-    ``{KONG_URL_PREFIX}/{alias}`` is included in the same route.
+    With ``_kong_alias``:
+        paths = [/{alias}, {prefix}/{alias}, {prefix}{django_path}]
+        route name = allow-{alias} (global; last-writer-wins)
 
     Raises:
         KeyError: if KONG_URL_PREFIX is not set in the environment.
@@ -76,8 +82,8 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
 
     walk(get_resolver())
 
-    routes: List[Dict] = []
-    seen_aliases: Set[str] = set()
+    # Keyed by Kong route name so duplicate aliases overwrite (last-writer-wins).
+    routes_by_name: Dict[str, Dict] = {}
 
     for name, view_class in exposed.items():
         path = None
@@ -94,39 +100,44 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
 
         upstream_uri = "/" + path.lstrip("/")
         full_gateway_path = url_prefix + upstream_uri
-        paths = [full_gateway_path]
-
         alias = getattr(view_class, "_kong_alias", None)
-        if alias:
-            if alias in seen_aliases:
-                logger.warning(
-                    "discover_routes: duplicate alias %r on %s — "
-                    "keeping full path only for this view",
-                    alias,
-                    getattr(view_class, "__name__", name),
-                )
-            else:
-                seen_aliases.add(alias)
-                paths.insert(0, f"{url_prefix}/{alias}")
 
-        route_name = "allow-" + path.strip("/").replace("/", "-").replace(".", "-")
-        routes.append(
-            {
-                "name": route_name,
-                "paths": paths,
-                "methods": view_class._kong_methods,
-                "service": view_class._kong_service,
-                "strip_path": False,
-                "upstream_uri": upstream_uri,
-            }
-        )
+        if alias:
+            paths = [
+                f"/{alias}",
+                f"{url_prefix}/{alias}",
+                full_gateway_path,
+            ]
+            route_name = "allow-" + alias.replace("/", "-")
+            if route_name in routes_by_name:
+                previous = routes_by_name[route_name]
+                logger.warning(
+                    "discover_routes: duplicate alias %r — "
+                    "overwriting previous registration (was upstream %s)",
+                    alias,
+                    previous.get("upstream_uri"),
+                )
+        else:
+            paths = [full_gateway_path]
+            route_name = "allow-" + path.strip("/").replace("/", "-").replace(".", "-")
+
+        routes_by_name[route_name] = {
+            "name": route_name,
+            "paths": paths,
+            "methods": view_class._kong_methods,
+            "service": view_class._kong_service,
+            "strip_path": False,
+            "upstream_uri": upstream_uri,
+        }
         logger.debug(
-            "discover_routes: found %s -> %s (upstream %s)",
+            "discover_routes: found %s -> %s (upstream %s, service %s)",
             route_name,
             paths,
             upstream_uri,
+            view_class._kong_service,
         )
 
+    routes = list(routes_by_name.values())
     logger.info("discover_routes: %d route(s) discovered", len(routes))
     return routes
 
@@ -183,18 +194,41 @@ def _ensure_uri_rewrite_plugin(admin_url: str, route_name: str, upstream_uri: st
     )
 
 
+def _route_service_name(admin_url: str, existing_route: dict) -> str:
+    """
+    Resolve the Kong service name attached to a route.
+
+    GET /routes/{name} usually returns ``service: {id}`` without ``name``;
+    resolve via GET /services/{id} when needed.
+    """
+    service = existing_route.get("service") or {}
+    name = service.get("name") or ""
+    if name:
+        return name
+    service_id = service.get("id")
+    if not service_id:
+        return ""
+    resp = http.get(f"{admin_url}/services/{service_id}", timeout=10)
+    if resp.status_code != 200:
+        return service_id
+    return resp.json().get("name") or service_id
+
+
 def sync_to_kong(admin_url: str, service: str, routes: List[Dict]) -> Tuple[List[str], List[str]]:
     """
     Registers discovered routes in Kong via the Admin API.
 
     Idempotent upsert:
       - creates the route when missing
-      - patches strip_path/paths/methods when the route already exists
+      - patches paths/methods/strip_path/service when the route already exists
       - ensures a request-transformer rewrites URI to the Django path
+
+    Alias routes (``allow-{alias}``) are last-writer-wins across services:
+    PATCH reassigns ``service`` when another microservice claims the same alias.
 
     Args:
         admin_url: Kong Admin API base URL, e.g. http://localhost:8001
-        service:   Kong service name to attach routes to
+        service:   Fallback Kong service name when a route has no ``service`` key
         routes:    Route definitions returned by discover_routes()
 
     Returns:
@@ -215,11 +249,13 @@ def sync_to_kong(admin_url: str, service: str, routes: List[Dict]) -> Tuple[List
                 "re-run discover_routes() with the updated weni_commons"
             )
 
+        route_service = route.get("service") or service
         payload = {
             "name": route["name"],
             "paths": route["paths"],
             "methods": route["methods"],
             "strip_path": route["strip_path"],
+            "service": {"name": route_service},
         }
 
         check = http.get(
@@ -228,6 +264,15 @@ def sync_to_kong(admin_url: str, service: str, routes: List[Dict]) -> Tuple[List
         )
 
         if check.status_code == 200:
+            existing = check.json()
+            previous_service = _route_service_name(admin_url, existing)
+            if previous_service and previous_service != route_service:
+                logger.warning(
+                    "sync_to_kong: overwriting route %s: service %s -> %s",
+                    route["name"],
+                    previous_service,
+                    route_service,
+                )
             http.patch(
                 f"{admin_url}/routes/{route['name']}",
                 json=payload,
@@ -236,29 +281,38 @@ def sync_to_kong(admin_url: str, service: str, routes: List[Dict]) -> Tuple[List
             _ensure_uri_rewrite_plugin(admin_url, route["name"], upstream_uri)
             updated.append(route["name"])
             logger.info(
-                "sync_to_kong: updated route %s -> %s (upstream %s)",
+                "sync_to_kong: updated route %s -> %s (upstream %s, service %s)",
                 route["name"],
                 route["paths"],
                 upstream_uri,
+                route_service,
             )
             continue
 
         if check.status_code != 404:
             check.raise_for_status()
 
+        # POST under the target service; body also carries service for clarity.
+        create_payload = {
+            "name": route["name"],
+            "paths": route["paths"],
+            "methods": route["methods"],
+            "strip_path": route["strip_path"],
+        }
         http.post(
-            f"{admin_url}/services/{service}/routes",
-            json=payload,
+            f"{admin_url}/services/{route_service}/routes",
+            json=create_payload,
             timeout=10,
         ).raise_for_status()
         _ensure_uri_rewrite_plugin(admin_url, route["name"], upstream_uri)
 
         created.append(route["name"])
         logger.info(
-            "sync_to_kong: created route %s -> %s (upstream %s)",
+            "sync_to_kong: created route %s -> %s (upstream %s, service %s)",
             route["name"],
             route["paths"],
             upstream_uri,
+            route_service,
         )
 
     return created, updated

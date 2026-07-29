@@ -11,6 +11,7 @@ Usage:
     @api_gateway_expose
     class WorkspaceEndpoint(BaseAPIView):
         ...
+        # Public: /flows/api/v2/workspace.json  (requires KONG_URL_PREFIX=/flows)
 
     @api_gateway_expose(methods=["GET", "POST"])
     class FlowStartsEndpoint(BaseAPIView):
@@ -19,8 +20,12 @@ Usage:
     @api_gateway_expose(alias="events")
     class EventsEndpoint(BaseAPIView):
         ...
-        # Public: /flows/events and /flows/api/v2/events.json
-        # Upstream: /api/v2/events.json
+        # Public (flat):   /events
+        # Compat:          /flows/events  and  /flows/api/v2/events.json
+        # Upstream:        /api/v2/events.json
+        #
+        # Alias routes are last-writer-wins: another service that syncs the
+        # same alias overwrites the Kong route (service + upstream).
 """
 import logging
 from typing import Any, List, Optional
@@ -59,10 +64,12 @@ def api_gateway_expose(
     Args:
         methods: HTTP methods allowed on this route. Defaults to ["GET"].
         service: Kong service name this view belongs to.
-        alias: Optional short public path segment under KONG_URL_PREFIX.
-            When set, Kong exposes both ``/{prefix}/{alias}`` and the full
-            Django path (e.g. ``/flows/events`` and
-            ``/flows/api/v2/events.json``). Upstream remains the Django path.
+        alias: Optional short public path (global). When set, Kong exposes:
+            - ``/{alias}`` (flat public path, e.g. ``/events``)
+            - ``/{KONG_URL_PREFIX}/{alias}`` (compat, e.g. ``/flows/events``)
+            - ``/{KONG_URL_PREFIX}{django_path}`` (compat full path)
+            Upstream remains the Django path. The Kong route is named
+            ``allow-{alias}`` and is last-writer-wins across services.
 
     The decorator does not modify the view behaviour — it only sets
     private attributes used by the kong_sync management command.
