@@ -4,15 +4,19 @@ Management command: kong_sync
 Discovers all views decorated with @api_gateway_expose in the project's URL
 configuration and registers them as routes in Kong via the Admin API.
 
-Client URLs keep the service prefix:
+Without alias, client URLs keep the service prefix:
     {KONG_URL_PREFIX}/api/v2/contacts.json   e.g. /flows/api/v2/contacts.json
 
-When a view sets ``alias`` on @api_gateway_expose, a short path is also
-registered (in addition to the full Django path):
-    {KONG_URL_PREFIX}/{alias}                e.g. /flows/events
+With ``alias`` on @api_gateway_expose, three public paths are registered:
+    /{alias}                                 e.g. /events          (flat)
+    {KONG_URL_PREFIX}/{alias}                e.g. /flows/events    (compat)
+    {KONG_URL_PREFIX}/api/v2/....json        e.g. /flows/api/v2/…  (compat)
 
-Upstream requests are rewritten to the Django path (prefix removed) via a
-request-transformer plugin on each allow-route.
+The Kong route for an alias is named ``allow-{alias}`` and is last-writer-wins:
+another service that syncs the same alias overwrites service + upstream.
+
+Upstream requests are rewritten to the Django path via a request-transformer
+plugin on each allow-route.
 
 Required setup:
     - Add "weni_commons" to INSTALLED_APPS so Django discovers this command.
