@@ -7,6 +7,10 @@ class Entity(str, Enum):
     CHANNEL = "CHANNEL"
     TRIGGER = "TRIGGER"
     CAMPAIGN = "CAMPAIGN"
+    QUEUE = "QUEUE"
+    SECTOR = "SECTOR"
+    HOLIDAY = "HOLIDAY"
+    WORKING_HOURS = "WORKING_HOURS"
 
     @classmethod
     def to_choices(cls):
