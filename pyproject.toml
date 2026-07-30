@@ -16,8 +16,7 @@ djangorestframework = ">=3.12.0,<4.0"
 django-redis = ">=4.0.0,<=6.0"
 celery = ">=5.0.0,<6.0"
 weni-feature-flags = "^2.2.0"
-# Allow 0.2.x (e.g. flows staging uses 0.2.0a10); ^0.1.2 rejected those.
-weni-eda = ">=0.1.2"
+weni-eda = "0.3.0"
 requests = ">=2.25.0"
 boto3 = ">=1.18.0,<2.0.0"
 
