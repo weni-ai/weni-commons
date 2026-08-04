@@ -4,6 +4,8 @@
 The decorator does not register paths at import time. Paths are discovered
 automatically at sync time by walking Django's URL resolver (see sync.py).
 
+Works with APIView classes, ViewSets, and individual ``@action`` methods.
+
 Usage:
 
     from weni_commons.kong import api_gateway_expose
@@ -13,19 +15,27 @@ Usage:
         ...
         # Public: /flows/api/v2/workspace.json  (requires KONG_URL_PREFIX=/flows)
 
-    @api_gateway_expose(methods=["GET", "POST"])
-    class FlowStartsEndpoint(BaseAPIView):
-        ...
-
     @api_gateway_expose(alias="events")
     class EventsEndpoint(BaseAPIView):
         ...
         # Public (flat):   /events
         # Compat:          /flows/events  and  /flows/api/v2/events.json
         # Upstream:        /api/v2/events.json
-        #
-        # Alias routes are last-writer-wins: another service that syncs the
-        # same alias overwrites the Kong route (service + upstream).
+
+    # ViewSet — expose every router-generated route for this class
+    @api_gateway_expose(service="insights-service")
+    class DashboardViewSet(viewsets.GenericViewSet):
+        ...
+
+    # Or decorate a single @action (detail routes may use {pk} in alias)
+    class DashboardViewSet(viewsets.GenericViewSet):
+        @api_gateway_expose(alias="dashboards/{pk}/widgets")
+        @action(detail=True, methods=["get"])
+        def list_widgets(self, request, pk=None):
+            ...
+
+Alias routes are last-writer-wins: another service that syncs the same
+alias overwrites the Kong route (service + upstream).
 """
 import logging
 from typing import Any, List, Optional
@@ -40,7 +50,7 @@ def _normalize_alias(alias: Optional[str]) -> Optional[str]:
     if not normalized:
         raise ValueError(
             "api_gateway_expose(alias=...) must be a non-empty path segment "
-            "(e.g. alias='events')"
+            "(e.g. alias='events' or alias='dashboards/{pk}/widgets')"
         )
     return normalized
 
@@ -53,26 +63,30 @@ def api_gateway_expose(
     alias: Optional[str] = None,
 ) -> Any:
     """
-    Marks a view as exposed via the API gateway (Kong).
+    Marks a view class or ViewSet action method as exposed via Kong.
 
     Can be used with or without arguments:
         @api_gateway_expose
         @api_gateway_expose(methods=["GET", "POST"])
         @api_gateway_expose(methods=["GET"], service="nexus-service")
         @api_gateway_expose(alias="events")
+        @api_gateway_expose(alias="dashboards/{pk}/widgets")
 
     Args:
         methods: HTTP methods allowed on this route. Defaults to ["GET"].
+            For ViewSet routes, discover_routes prefers methods from
+            ``callback.actions`` when present.
         service: Kong service name this view belongs to.
-        alias: Optional short public path (global). When set, Kong exposes:
-            - ``/{alias}`` (flat public path, e.g. ``/events``)
-            - ``/{KONG_URL_PREFIX}/{alias}`` (compat, e.g. ``/flows/events``)
-            - ``/{KONG_URL_PREFIX}{django_path}`` (compat full path)
+        alias: Optional short public path (global). May include ``{pk}``
+            (or other path converters) for detail actions. When set without
+            path params, Kong exposes:
+            - ``/{alias}`` (flat)
+            - ``/{KONG_URL_PREFIX}/{alias}`` (compat)
+            - ``/{KONG_URL_PREFIX}{django_path}`` (compat)
             Upstream remains the Django path. The Kong route is named
             ``allow-{alias}`` and is last-writer-wins across services.
 
-    The decorator does not modify the view behaviour — it only sets
-    private attributes used by the kong_sync management command.
+    The decorator only sets private attributes used by kong_sync.
     """
     normalized_methods = [m.upper() for m in (methods or ["GET"])]
     normalized_alias = _normalize_alias(alias)
