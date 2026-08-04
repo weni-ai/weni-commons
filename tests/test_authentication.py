@@ -24,7 +24,9 @@ class ProtectedView(APIView):
         return Response(
             {
                 "project": request.auth.project,
+                "project_uuid": getattr(request, "project_uuid", None),
                 "user": request.user.email,
+                "user_type": type(request.user).__name__,
             }
         )
 
@@ -101,6 +103,7 @@ def test_authenticate_returns_user_and_session(mock_use_case_cls, valid_payload)
     assert isinstance(user, SessionUser)
     assert user.email == "user@example.com"
     assert auth == session
+    assert request.project_uuid == "project-uuid"
 
 
 @patch("weni_commons.auth.authentication.ValidateSessionTokenUseCase")
@@ -115,7 +118,9 @@ def test_valid_session_token_authenticates_view(mock_use_case_cls, factory, vali
 
     assert response.status_code == status.HTTP_200_OK
     assert response.data["project"] == "project-uuid"
+    assert response.data["project_uuid"] == "project-uuid"
     assert response.data["user"] == "user@example.com"
+    assert response.data["user_type"] == "SessionUser"
 
 
 def test_missing_authorization_is_not_authenticated(factory):
@@ -156,3 +161,5 @@ def test_end_to_end_with_redis_payload(mock_get_redis, factory, valid_payload):
 
     assert response.status_code == status.HTTP_200_OK
     assert response.data["user"] == "user@example.com"
+    assert response.data["project_uuid"] == "project-uuid"
+    assert response.data["user_type"] == "SessionUser"
