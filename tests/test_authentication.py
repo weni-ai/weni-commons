@@ -23,7 +23,7 @@ class ProtectedView(APIView):
     def get(self, request):
         return Response(
             {
-                "projeto": request.auth.projeto,
+                "project": request.auth.project,
                 "user": request.user.email,
             }
         )
@@ -52,7 +52,7 @@ def factory():
 @pytest.fixture
 def valid_payload():
     return {
-        "projeto": "project-uuid",
+        "project": "project-uuid",
         "user": "user@example.com",
         "expire_at": "2026-06-10T12:00:00+00:00",
     }
@@ -114,7 +114,7 @@ def test_valid_session_token_authenticates_view(mock_use_case_cls, factory, vali
     response = ProtectedView.as_view()(request)
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.data["projeto"] == "project-uuid"
+    assert response.data["project"] == "project-uuid"
     assert response.data["user"] == "user@example.com"
 
 
