@@ -59,7 +59,7 @@ def evict_cache(redis_connection, token_hash: str) -> None:
 
 @dataclass(frozen=True)
 class SessionContext:
-    projeto: str
+    project: str
     user: str
     expire_at: str
 
@@ -68,15 +68,15 @@ def _build_session_context(payload: dict) -> Optional[SessionContext]:
     if not isinstance(payload, dict):
         return None
 
-    projeto = payload.get("projeto")
+    project = payload.get("project")
     user = payload.get("user")
     expire_at = payload.get("expire_at")
 
-    if not projeto or not user or not expire_at:
+    if not project or not user or not expire_at:
         return None
 
     return SessionContext(
-        projeto=str(projeto),
+        project=str(project),
         user=str(user),
         expire_at=str(expire_at),
     )
