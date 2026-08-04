@@ -16,6 +16,7 @@ def __getattr__(name):
         from weni.feature_flags.services import FeatureFlagsService
 
         return FeatureFlagsService
+
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

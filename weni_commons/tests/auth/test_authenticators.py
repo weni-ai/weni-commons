@@ -1,0 +1,436 @@
+"""
+Tests for WeniAuthentication.
+"""
+
+import jwt
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from django.contrib.auth import get_user_model
+from django.test import TestCase, override_settings
+from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.test import APIRequestFactory
+
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from weni_commons.auth.authenticators import WeniAuthentication
+from weni_commons.auth.context import WeniAuthContext, WeniAuthUser
+from weni_commons.auth.permissions import IsWeniAuthenticated
+from weni_commons.auth import WENI_AUTH_HEADER
+from tests.backends import TestOIDCAuthenticationBackend
+
+User = get_user_model()
+
+
+class _ProtectedView(APIView):
+    """Minimal protected view to assert the 401-vs-403 auth contract."""
+
+    authentication_classes = [WeniAuthentication]
+    permission_classes = [IsWeniAuthenticated]
+
+    def get(self, request):
+        return Response({"ok": True})
+
+
+class _DenyAllPermission(IsWeniAuthenticated):
+    """Authenticated but always denied, to assert 403 is preserved."""
+
+    def has_permission(self, request, view):
+        return False
+
+
+class _ForbiddenView(APIView):
+    """View that authenticates the caller but denies permission."""
+
+    authentication_classes = [WeniAuthentication]
+    permission_classes = [_DenyAllPermission]
+
+    def get(self, request):
+        return Response({"ok": True})
+
+
+class WeniAuthenticationTestCase(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.auth = WeniAuthentication()
+        self.mock_public_key = b"test-public-key"
+        self.user = User.objects.create_user(
+            username="keycloak-user",
+            email="keycloak@example.com",
+            password="password",
+        )
+        TestOIDCAuthenticationBackend.user = self.user
+        TestOIDCAuthenticationBackend.claims = {
+            "email": "keycloak@example.com",
+            "project_uuid": "project-from-keycloak",
+            "vtex_account": "store-from-keycloak",
+            "can_communicate_internally": True,
+        }
+        TestOIDCAuthenticationBackend.should_fail = False
+
+    def _request_with_token(self, token: str, *, header: str = "Authorization"):
+        request = self.factory.get("/")
+        if header == WENI_AUTH_HEADER:
+            request.headers = {WENI_AUTH_HEADER: token}
+        else:
+            request.headers = {"Authorization": f"Bearer {token}"}
+        return request
+
+    def test_returns_none_when_authorization_header_is_missing(self):
+        request = self.factory.get("/")
+        request.headers = {}
+
+        self.assertIsNone(self.auth.authenticate(request))
+
+    def test_authenticate_header_is_non_empty_to_keep_401(self):
+        self.assertTrue(self.auth.authenticate_header(self.factory.get("/")))
+
+    def test_missing_token_returns_401_not_403(self):
+        response = _ProtectedView.as_view()(self.factory.get("/"))
+
+        self.assertEqual(response.status_code, 401)
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_expired_token_returns_401_not_403(self, mock_jwt_decode):
+        mock_jwt_decode.side_effect = jwt.ExpiredSignatureError("expired")
+
+        request = self.factory.get("/", HTTP_X_WENI_AUTH="expired-jwt")
+        response = _ProtectedView.as_view()(request)
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_invalid_token_returns_401_not_403(self):
+        TestOIDCAuthenticationBackend.should_fail = True
+
+        request = self.factory.get("/", HTTP_X_WENI_AUTH="not-a-valid-jwt")
+        response = _ProtectedView.as_view()(request)
+
+        self.assertEqual(response.status_code, 401)
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_authenticated_without_permission_returns_403(self, mock_jwt_decode):
+        mock_jwt_decode.return_value = {
+            "project_uuid": "project-123",
+            "user_email": "user@example.com",
+        }
+
+        request = self.factory.get("/", HTTP_X_WENI_AUTH="valid-jwt")
+        response = _ForbiddenView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_authenticated_and_authorized_returns_200(self, mock_jwt_decode):
+        mock_jwt_decode.return_value = {
+            "project_uuid": "project-123",
+            "user_email": "user@example.com",
+        }
+
+        request = self.factory.get("/", HTTP_X_WENI_AUTH="valid-jwt")
+        response = _ProtectedView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_authenticates_jwt_from_x_weni_auth_header(self, mock_jwt_decode):
+        mock_jwt_decode.return_value = {
+            "project_uuid": "project-123",
+            "vtex_account": "mystore",
+            "user_email": "user@example.com",
+        }
+
+        user, auth_context = self.auth.authenticate(
+            self._request_with_token("app-io-jwt", header=WENI_AUTH_HEADER)
+        )
+
+        self.assertIsInstance(user, WeniAuthUser)
+        self.assertEqual(auth_context.vtex_account, "mystore")
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_authenticates_valid_jwt_with_project_uuid(self, mock_jwt_decode):
+        payload = {
+            "project_uuid": "project-123",
+            "user_email": "user@example.com",
+            "vtex_account": "mystore",
+        }
+        mock_jwt_decode.return_value = payload
+
+        user, auth_context = self.auth.authenticate(
+            self._request_with_token("valid-jwt-token")
+        )
+
+        self.assertIsInstance(user, WeniAuthUser)
+        self.assertEqual(user.email, "user@example.com")
+        self.assertEqual(auth_context.project_uuid, "project-123")
+        self.assertEqual(auth_context.vtex_account, "mystore")
+        self.assertEqual(auth_context.user_email, "user@example.com")
+        self.assertFalse(auth_context.is_internal)
+        self.assertEqual(auth_context.token_type, "jwt")
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_authenticates_valid_jwt_with_vtex_account_only(self, mock_jwt_decode):
+        mock_jwt_decode.return_value = {
+            "vtex_account": "mystore",
+            "email": "user@example.com",
+        }
+
+        _, auth_context = self.auth.authenticate(self._request_with_token("valid-jwt"))
+
+        self.assertFalse(auth_context.has_project_uuid)
+        self.assertEqual(auth_context.vtex_account, "mystore")
+        self.assertEqual(auth_context.user_email, "user@example.com")
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_jwt_populates_account_id_when_present(self, mock_jwt_decode):
+        mock_jwt_decode.return_value = {
+            "vtex_account": "mystore",
+            "account_id": "acc-123",
+        }
+
+        _, auth_context = self.auth.authenticate(self._request_with_token("jwt"))
+
+        self.assertTrue(auth_context.has_account_id)
+        self.assertEqual(auth_context.account_id, "acc-123")
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_jwt_without_account_id_does_not_affect_tenant_validation(
+        self, mock_jwt_decode
+    ):
+        mock_jwt_decode.return_value = {"vtex_account": "mystore"}
+
+        _, auth_context = self.auth.authenticate(self._request_with_token("jwt"))
+
+        self.assertEqual(auth_context.vtex_account, "mystore")
+        self.assertFalse(auth_context.has_account_id)
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_jwt_can_set_internal_caller_when_claim_is_present(self, mock_jwt_decode):
+        mock_jwt_decode.return_value = {
+            "project_uuid": "project-123",
+            "can_communicate_internally": True,
+        }
+
+        _, auth_context = self.auth.authenticate(self._request_with_token("internal-jwt"))
+
+        self.assertTrue(auth_context.is_internal)
+        self.assertEqual(auth_context.token_type, "jwt")
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_raises_when_jwt_has_no_project_or_vtex_account(self, mock_jwt_decode):
+        mock_jwt_decode.return_value = {"user_email": "user@example.com"}
+
+        with self.assertRaises(AuthenticationFailed) as context:
+            self.auth.authenticate(self._request_with_token("invalid-payload"))
+
+        self.assertIn("project_uuid", str(context.exception))
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_raises_when_jwt_is_expired(self, mock_jwt_decode):
+        mock_jwt_decode.side_effect = jwt.ExpiredSignatureError("expired")
+
+        with self.assertRaises(AuthenticationFailed) as context:
+            self.auth.authenticate(self._request_with_token("expired-jwt"))
+
+        self.assertIn("expired", str(context.exception).lower())
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_falls_back_to_keycloak_when_jwt_signature_is_invalid(
+        self, mock_jwt_decode
+    ):
+        mock_jwt_decode.side_effect = jwt.InvalidTokenError("invalid signature")
+
+        user, auth_context = self.auth.authenticate(
+            self._request_with_token("keycloak-token")
+        )
+
+        self.assertEqual(user, self.user)
+        self.assertEqual(auth_context.token_type, "keycloak")
+        self.assertEqual(auth_context.project_uuid, "project-from-keycloak")
+        self.assertEqual(auth_context.vtex_account, "store-from-keycloak")
+        self.assertEqual(auth_context.user_email, "keycloak@example.com")
+        self.assertTrue(auth_context.is_internal)
+
+    @override_settings(JWT_PUBLIC_KEY=None, OIDC_DRF_AUTH_BACKEND=None)
+    def test_raises_when_keycloak_is_not_configured(self):
+        auth = WeniAuthentication()
+
+        with self.assertRaises(AuthenticationFailed) as context:
+            auth.authenticate(self._request_with_token("opaque-token"))
+
+        self.assertIn("OIDC_DRF_AUTH_BACKEND", str(context.exception))
+
+    @override_settings(JWT_PUBLIC_KEY=None)
+    def test_raises_when_keycloak_token_is_invalid(self):
+        TestOIDCAuthenticationBackend.should_fail = True
+
+        with self.assertRaises(AuthenticationFailed) as context:
+            self.auth.authenticate(self._request_with_token("bad-keycloak-token"))
+
+        self.assertIn("Invalid token", str(context.exception))
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_accepts_raw_token_without_bearer_prefix(self, mock_jwt_decode):
+        mock_jwt_decode.return_value = {
+            "project_uuid": "project-123",
+            "user_email": "user@example.com",
+        }
+
+        request = self.factory.get("/")
+        request.headers = {"Authorization": "raw-token"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertEqual(auth_context.project_uuid, "project-123")
+
+    @override_settings(JWT_PUBLIC_KEY=None)
+    def test_keycloak_resolves_tenant_from_request_when_claims_absent(self):
+        TestOIDCAuthenticationBackend.claims = {"email": "keycloak@example.com"}
+
+        request = self.factory.get(
+            "/?projectUuid=proj-from-query&vtex_account=store-from-query"
+        )
+        request.headers = {"Authorization": "Bearer keycloak-token"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertEqual(auth_context.token_type, "keycloak")
+        self.assertEqual(auth_context.project_uuid, "proj-from-query")
+        self.assertEqual(auth_context.vtex_account, "store-from-query")
+
+    @override_settings(JWT_PUBLIC_KEY=None)
+    def test_keycloak_claims_take_precedence_over_request(self):
+        TestOIDCAuthenticationBackend.claims = {
+            "email": "keycloak@example.com",
+            "project_uuid": "proj-from-token",
+        }
+
+        request = self.factory.get("/?project_uuid=proj-from-query")
+        request.headers = {"Authorization": "Bearer keycloak-token"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertEqual(auth_context.project_uuid, "proj-from-token")
+
+    def test_resolve_keycloak_is_internal_false_when_user_lacks_permissions(self):
+        user_without_permissions = SimpleNamespace(email="user@example.com")
+
+        self.assertFalse(
+            self.auth._resolve_keycloak_is_internal({}, user_without_permissions)
+        )
+
+    @override_settings(JWT_PUBLIC_KEY=None)
+    def test_keycloak_internal_resolves_user_from_request(self):
+        TestOIDCAuthenticationBackend.claims = {
+            "email": "internal-service@weni.ai",
+            "vtex_account": "store",
+            "can_communicate_internally": True,
+        }
+
+        request = self.factory.get("/?user=real.user@vtex.com")
+        request.headers = {"Authorization": "Bearer keycloak-token"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertTrue(auth_context.is_internal)
+        self.assertEqual(auth_context.user_email, "real.user@vtex.com")
+
+    @override_settings(JWT_PUBLIC_KEY=None)
+    def test_keycloak_internal_falls_back_to_token_user_when_request_omits_user(self):
+        TestOIDCAuthenticationBackend.claims = {
+            "email": "internal-service@weni.ai",
+            "vtex_account": "store",
+            "can_communicate_internally": True,
+        }
+
+        request = self.factory.get("/")
+        request.headers = {"Authorization": "Bearer keycloak-token"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertTrue(auth_context.is_internal)
+        self.assertEqual(auth_context.user_email, "internal-service@weni.ai")
+
+    @override_settings(JWT_PUBLIC_KEY=None)
+    def test_keycloak_non_internal_uses_token_user_ignoring_request(self):
+        TestOIDCAuthenticationBackend.claims = {
+            "email": "real.user@vtex.com",
+            "vtex_account": "store",
+        }
+
+        request = self.factory.get("/?user=spoofed@evil.com")
+        request.headers = {"Authorization": "Bearer keycloak-token"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertFalse(auth_context.is_internal)
+        self.assertEqual(auth_context.user_email, "real.user@vtex.com")
+
+    @override_settings(JWT_PUBLIC_KEY=None)
+    def test_keycloak_resolves_account_id_from_claims_only(self):
+        TestOIDCAuthenticationBackend.claims = {
+            "email": "keycloak@example.com",
+            "account_id": "acc-from-token",
+        }
+
+        request = self.factory.get("/?account_id=acc-from-request")
+        request.headers = {"Authorization": "Bearer keycloak-token"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertEqual(auth_context.account_id, "acc-from-token")
+
+    @override_settings(JWT_PUBLIC_KEY=None)
+    def test_keycloak_account_id_absent_when_not_in_claims(self):
+        TestOIDCAuthenticationBackend.claims = {"email": "keycloak@example.com"}
+
+        request = self.factory.get("/?account_id=acc-from-request")
+        request.headers = {"Authorization": "Bearer keycloak-token"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertFalse(auth_context.has_account_id)
+
+    @override_settings(JWT_PUBLIC_KEY=b"test-public-key")
+    @patch("weni_commons.auth.authenticators.jwt.decode")
+    def test_jwt_tenant_is_immutable_and_ignores_request_values(
+        self, mock_jwt_decode
+    ):
+        mock_jwt_decode.return_value = {"project_uuid": "project-from-token"}
+
+        request = self.factory.get("/?project_uuid=project-from-request")
+        request.headers = {WENI_AUTH_HEADER: "app-io-jwt"}
+
+        _, auth_context = self.auth.authenticate(request)
+
+        self.assertEqual(auth_context.token_type, "jwt")
+        self.assertEqual(auth_context.project_uuid, "project-from-token")
+
+    def test_uses_injected_oidc_backend(self):
+        backend = MagicMock()
+        backend.get_or_create_user.return_value = self.user
+        backend.verify_token.return_value = {"email": "injected@example.com"}
+
+        auth = WeniAuthentication(oidc_backend=backend)
+
+        with override_settings(JWT_PUBLIC_KEY=None):
+            user, auth_context = auth.authenticate(
+                self._request_with_token("keycloak-token")
+            )
+
+        backend.get_or_create_user.assert_called_once()
+        self.assertEqual(user, self.user)
+        self.assertEqual(auth_context.user_email, "injected@example.com")
