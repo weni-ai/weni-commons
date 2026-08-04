@@ -4,7 +4,6 @@ from typing import Optional
 from rest_framework import HTTP_HEADER_ENCODING
 from rest_framework.authentication import BaseAuthentication, get_authorization_header
 
-from weni_commons.auth.resolve import resolve_session_user
 from weni_commons.auth.session import ValidateSessionTokenUseCase
 
 logger = logging.getLogger(__name__)
@@ -45,8 +44,8 @@ class SessionTokenAuthentication(BaseAuthentication):
     invalid, expired, or when the store lookup fails, so other authentication
     classes can run afterward.
 
-    When ``WENI_SESSION_TOKEN_ORG_MODEL`` is configured, the authenticated user is
-    a real Django user with org attached (see ``resolve_session_user``).
+    On success, sets ``request.project_uuid`` from the session and returns a
+    ``SessionUser``. Org/project membership checks belong in permission classes.
     """
 
     www_authenticate_realm = "api"
@@ -66,13 +65,10 @@ class SessionTokenAuthentication(BaseAuthentication):
         if session is None:
             return None
 
-        try:
-            user = resolve_session_user(request, session)
-        except Exception:
-            logger.exception("Session user resolution failed for Bearer token")
-            return None
+        if session.projeto:
+            request.project_uuid = session.projeto
 
-        return (user, session)
+        return (SessionUser(email=session.user), session)
 
     def authenticate_header(self, request):
         return 'Bearer realm="api"'
