@@ -1,7 +1,11 @@
+from io import StringIO
 from unittest.mock import patch
 
 import pytest
 import requests
+from django.core.management import call_command
+from django.core.management.base import CommandError
+from django.test import override_settings
 
 from weni_commons.kong.sync import (
     PruneLimitExceeded,
@@ -353,3 +357,37 @@ def test_prune_above_threshold_runs_with_force():
 
     assert len(deleted) == 4
     assert len(kong.methods("DELETE")) == 4
+
+
+def test_command_requires_service(monkeypatch):
+    monkeypatch.delenv("KONG_SERVICE", raising=False)
+
+    with pytest.raises(CommandError) as excinfo:
+        call_command("kong_sync", "--url-prefix", PREFIX)
+
+    assert "KONG_SERVICE" in str(excinfo.value)
+
+
+def test_command_requires_url_prefix(monkeypatch):
+    monkeypatch.delenv("KONG_URL_PREFIX", raising=False)
+
+    with pytest.raises(CommandError) as excinfo:
+        call_command("kong_sync", "--service", SERVICE)
+
+    assert "KONG_URL_PREFIX" in str(excinfo.value)
+
+
+@override_settings(
+    KONG_URL_PREFIX=PREFIX,
+    KONG_SERVICE=SERVICE,
+    KONG_ADMIN_URL=ADMIN,
+    ROOT_URLCONF="tests.urls",
+)
+def test_command_runs_with_configuration_from_settings(monkeypatch):
+    for name in ("KONG_URL_PREFIX", "KONG_SERVICE", "KONG_ADMIN_URL"):
+        monkeypatch.delenv(name, raising=False)
+
+    stdout = StringIO()
+    call_command("kong_sync", stdout=stdout)
+
+    assert "No @api_gateway_expose routes found" in stdout.getvalue()
