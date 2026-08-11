@@ -1,7 +1,11 @@
+from io import StringIO
 from unittest.mock import patch
 
 import pytest
 import requests
+from django.core.management import call_command
+from django.core.management.base import CommandError
+from django.test import override_settings
 
 from weni_commons.kong.sync import (
     PruneLimitExceeded,
@@ -19,16 +23,17 @@ EVENTS_UPSTREAM = "/api/v2/events.json"
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None):
+    def __init__(self, status_code=200, payload=None, text=""):
         self.status_code = status_code
         self._payload = {} if payload is None else payload
+        self.text = text
 
     def json(self):
         return self._payload
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise requests.HTTPError(f"status {self.status_code}")
+            raise requests.HTTPError(f"status {self.status_code}", response=self)
 
 
 class FakeKong:
@@ -109,7 +114,7 @@ def kong_route(**overrides):
         "methods": ["GET"],
         "strip_path": False,
         "service": {"id": SERVICE_ID},
-        "tags": ["kong-sync", f"prefix:{PREFIX}"],
+        "tags": ["kong-sync", "prefix-flows"],
     }
     route.update(overrides)
     return route
@@ -174,7 +179,7 @@ def test_missing_route_is_created():
     assert f"{ADMIN}/routes/allow-events/plugins" in post_urls
 
     create_payload = kong.methods("POST")[0][2]
-    assert create_payload["tags"] == ["kong-sync", f"prefix:{PREFIX}"]
+    assert create_payload["tags"] == ["kong-sync", "prefix-flows"]
     assert "service" not in create_payload
 
 
@@ -211,7 +216,7 @@ def test_missing_tags_trigger_patch():
     _, updated, _, _ = run_sync(kong, [discovered_route()], prune=False)
 
     assert updated == ["allow-events"]
-    assert kong.methods("PATCH")[0][2]["tags"] == ["kong-sync", f"prefix:{PREFIX}"]
+    assert kong.methods("PATCH")[0][2]["tags"] == ["kong-sync", "prefix-flows"]
 
 
 def test_service_change_triggers_patch():
@@ -297,7 +302,7 @@ def test_prune_keeps_protected_routes():
             name="allow-foreign-tagged",
             id="route-foreign-tagged",
             paths=["/nexus/api/v2/tagged.json"],
-            tags=["kong-sync", "prefix:/nexus"],
+            tags=["kong-sync", "prefix-nexus"],
         ),
         kong_route(name="allow-moved", id="route-moved"),
     ]
@@ -353,3 +358,37 @@ def test_prune_above_threshold_runs_with_force():
 
     assert len(deleted) == 4
     assert len(kong.methods("DELETE")) == 4
+
+
+def test_command_requires_service(monkeypatch):
+    monkeypatch.delenv("KONG_SERVICE", raising=False)
+
+    with pytest.raises(CommandError) as excinfo:
+        call_command("kong_sync", "--url-prefix", PREFIX)
+
+    assert "KONG_SERVICE" in str(excinfo.value)
+
+
+def test_command_requires_url_prefix(monkeypatch):
+    monkeypatch.delenv("KONG_URL_PREFIX", raising=False)
+
+    with pytest.raises(CommandError) as excinfo:
+        call_command("kong_sync", "--service", SERVICE)
+
+    assert "KONG_URL_PREFIX" in str(excinfo.value)
+
+
+@override_settings(
+    KONG_URL_PREFIX=PREFIX,
+    KONG_SERVICE=SERVICE,
+    KONG_ADMIN_URL=ADMIN,
+    ROOT_URLCONF="tests.urls",
+)
+def test_command_runs_with_configuration_from_settings(monkeypatch):
+    for name in ("KONG_URL_PREFIX", "KONG_SERVICE", "KONG_ADMIN_URL"):
+        monkeypatch.delenv(name, raising=False)
+
+    stdout = StringIO()
+    call_command("kong_sync", stdout=stdout)
+
+    assert "No @api_gateway_expose routes found" in stdout.getvalue()

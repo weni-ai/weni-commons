@@ -5,10 +5,22 @@ Registers a Kong Service and its default-block catch-all route (403) via the
 Admin API. Idempotent — safe to re-run. Does not modify allow-routes created
 by ``kong_sync`` / ``@api_gateway_expose``.
 
+Configuration:
+    KONG_ADMIN_URL, KONG_SERVICE, KONG_SERVICE_URL and KONG_URL_PREFIX are read
+    from the host project's Django settings first, then from the environment. A
+    command-line flag overrides both.
+
 Required setup:
     - Add "weni_commons" to INSTALLED_APPS so Django discovers this command.
 
 Usage:
+    # Using Django settings (recommended)
+    #   KONG_ADMIN_URL = "http://kong-admin:8001"
+    #   KONG_SERVICE = "billing-service"
+    #   KONG_SERVICE_URL = "https://billing.stg.cloud.weni.ai"
+    #   KONG_URL_PREFIX = "/billing"
+    python manage.py kong_ensure_service
+
     # Using environment variables
     KONG_ADMIN_URL=http://kong-admin:8001 \\
     KONG_SERVICE=billing-service \\
@@ -26,10 +38,9 @@ Usage:
     # Preview without applying
     python manage.py kong_ensure_service --dry-run
 """
-import os
-
 from django.core.management.base import BaseCommand, CommandError
 
+from weni_commons.kong.config import resolve_config
 from weni_commons.kong.service import (
     DEFAULT_BLOCK_MESSAGE,
     DEFAULT_BLOCK_STATUS,
@@ -47,23 +58,23 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--kong-addr",
-            default=os.environ.get("KONG_ADMIN_URL", "http://localhost:8001"),
-            help="Kong Admin API base URL (env: KONG_ADMIN_URL)",
+            default=resolve_config("KONG_ADMIN_URL", "http://localhost:8001"),
+            help="Kong Admin API base URL (setting/env: KONG_ADMIN_URL)",
         )
         parser.add_argument(
             "--service",
-            default=os.environ.get("KONG_SERVICE"),
-            help="Kong service name, e.g. billing-service (env: KONG_SERVICE)",
+            default=resolve_config("KONG_SERVICE"),
+            help="Kong service name, e.g. billing-service (setting/env: KONG_SERVICE)",
         )
         parser.add_argument(
             "--url",
-            default=os.environ.get("KONG_SERVICE_URL"),
-            help="Upstream service URL (env: KONG_SERVICE_URL)",
+            default=resolve_config("KONG_SERVICE_URL"),
+            help="Upstream service URL (setting/env: KONG_SERVICE_URL)",
         )
         parser.add_argument(
             "--url-prefix",
-            default=os.environ.get("KONG_URL_PREFIX"),
-            help="Gateway path prefix, e.g. /billing (env: KONG_URL_PREFIX)",
+            default=resolve_config("KONG_URL_PREFIX"),
+            help="Gateway path prefix, e.g. /billing (setting/env: KONG_URL_PREFIX)",
         )
         parser.add_argument(
             "--dry-run",
@@ -75,13 +86,15 @@ class Command(BaseCommand):
         service = (options["service"] or "").strip()
         if not service:
             raise CommandError(
-                "--service is required, or set the KONG_SERVICE environment variable"
+                "--service is required, or set KONG_SERVICE in your Django settings "
+                "or environment"
             )
 
         url = (options["url"] or "").strip()
         if not url:
             raise CommandError(
-                "--url is required, or set the KONG_SERVICE_URL environment variable"
+                "--url is required, or set KONG_SERVICE_URL in your Django settings "
+                "or environment"
             )
         if not url.startswith(("http://", "https://")):
             raise CommandError(
@@ -92,7 +105,8 @@ class Command(BaseCommand):
         url_prefix = (options["url_prefix"] or "").strip()
         if not url_prefix:
             raise CommandError(
-                "--url-prefix is required, or set the KONG_URL_PREFIX environment variable"
+                "--url-prefix is required, or set KONG_URL_PREFIX in your Django "
+                "settings or environment"
             )
         if not url_prefix.startswith("/"):
             url_prefix = "/" + url_prefix
@@ -101,8 +115,9 @@ class Command(BaseCommand):
         if not options["dry_run"]:
             if not kong_addr:
                 raise CommandError(
-                    "--kong-addr is required, or set the KONG_ADMIN_URL environment variable "
-                    "(it is currently empty — check that the KONG_ADMIN_URL secret is configured)"
+                    "--kong-addr is required, or set KONG_ADMIN_URL in your Django settings "
+                    "or environment (it is currently empty — check that the KONG_ADMIN_URL "
+                    "secret is configured)"
                 )
             if not kong_addr.startswith(("http://", "https://")):
                 raise CommandError(
