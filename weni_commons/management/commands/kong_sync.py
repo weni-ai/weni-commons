@@ -25,9 +25,16 @@ Upstream rewrite:
     - Static paths → request-transformer ``replace.uri``
     - Parameterized paths → pre-function (strip prefix or rewrite captures)
 
+The sync reconciles instead of rewriting everything: the Kong state is read in
+bulk and only the routes that are missing or divergent are written. Routes this
+service exposed before and no longer decorates are deleted (prune), which is on
+by default — pass --no-prune to keep them.
+
 Required setup:
     - Add "weni_commons" to INSTALLED_APPS so Django discovers this command.
     - Set KONG_URL_PREFIX in the environment (e.g. /flows, /nexus).
+    - KONG_ADMIN_URL must be reachable, including for --dry-run, since the plan
+      is computed against the live Kong state.
 
 Usage:
     # Using environment variables (recommended for CI/CD)
@@ -38,6 +45,12 @@ Usage:
 
     # Preview without applying
     python manage.py kong_sync --dry-run
+
+    # Keep orphan routes in Kong
+    python manage.py kong_sync --no-prune
+
+    # Confirm a prune above the safety threshold
+    python manage.py kong_sync --force-prune
 """
 import os
 from importlib import import_module
@@ -45,7 +58,7 @@ from importlib import import_module
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from weni_commons.kong.sync import discover_routes, sync_to_kong
+from weni_commons.kong.sync import PruneLimitExceeded, discover_routes, sync_to_kong
 
 
 class Command(BaseCommand):
@@ -75,7 +88,19 @@ class Command(BaseCommand):
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Discover and list routes without registering them in Kong",
+            help="Report the plan against the live Kong state without writing",
+        )
+        parser.add_argument(
+            "--no-prune",
+            dest="prune",
+            action="store_false",
+            default=True,
+            help="Keep routes that are no longer decorated (prune is on by default)",
+        )
+        parser.add_argument(
+            "--force-prune",
+            action="store_true",
+            help="Confirm a prune that exceeds the safety threshold",
         )
 
     def handle(self, *args, **options):
@@ -85,18 +110,18 @@ class Command(BaseCommand):
                 "--url-prefix is required, or set the KONG_URL_PREFIX environment variable"
             )
 
+        # Required for --dry-run too: the plan is diffed against the live state.
         kong_addr = (options["kong_addr"] or "").strip()
-        if not options["dry_run"]:
-            if not kong_addr:
-                raise CommandError(
-                    "--kong-addr is required, or set the KONG_ADMIN_URL environment variable "
-                    "(it is currently empty — check that the KONG_ADMIN_URL secret is configured)"
-                )
-            if not kong_addr.startswith(("http://", "https://")):
-                raise CommandError(
-                    "KONG_ADMIN_URL must start with http:// or https:// "
-                    f"(got: {kong_addr!r}). Example: http://kong-admin.example.com:8001"
-                )
+        if not kong_addr:
+            raise CommandError(
+                "--kong-addr is required, or set the KONG_ADMIN_URL environment variable "
+                "(it is currently empty — check that the KONG_ADMIN_URL secret is configured)"
+            )
+        if not kong_addr.startswith(("http://", "https://")):
+            raise CommandError(
+                "KONG_ADMIN_URL must start with http:// or https:// "
+                f"(got: {kong_addr!r}). Example: http://kong-admin.example.com:8001"
+            )
         options["kong_addr"] = kong_addr
 
         # Ensure the env is set so discover_routes() can read it
@@ -112,37 +137,55 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("No @api_gateway_expose routes found."))
             return
 
-        if options["dry_run"]:
-            self.stdout.write(f"\nDry run — {len(routes)} route(s) discovered:\n")
-            for route in routes:
-                mode = route.get("rewrite_mode", "static_uri")
-                self.stdout.write(
-                    f"  {route['name']:<50} gateway={route['paths']}  "
-                    f"upstream={route['upstream_uri']}  {route['methods']}  "
-                    f"rewrite={mode}"
-                )
-            self.stdout.write("")
-            return
+        dry_run = options["dry_run"]
+        prune = options["prune"]
 
         self.stdout.write(
-            f"Syncing {len(routes)} route(s) to {options['kong_addr']} "
-            f"(service: {options['service']}) ...\n"
+            f"{'Planning' if dry_run else 'Syncing'} {len(routes)} route(s) with "
+            f"{options['kong_addr']} (service: {options['service']}, "
+            f"prune: {'on' if prune else 'off'}) ...\n"
         )
 
-        created, updated = sync_to_kong(
-            admin_url=options["kong_addr"],
-            service=options["service"],
-            routes=routes,
+        try:
+            created, updated, skipped, deleted = sync_to_kong(
+                admin_url=options["kong_addr"],
+                service=options["service"],
+                routes=routes,
+                prune=prune,
+                force_prune=options["force_prune"],
+                dry_run=dry_run,
+            )
+        except PruneLimitExceeded as exc:
+            raise CommandError(str(exc)) from exc
+
+        by_name = {route["name"]: route for route in routes}
+        create_label, update_label, skip_label, delete_label = (
+            ("create", "update", "skip", "delete")
+            if dry_run
+            else ("created", "updated", "skipped", "deleted")
         )
 
-        for name in created:
-            self.stdout.write(f"  created  {name}")
-        for name in updated:
-            self.stdout.write(f"  updated  {name}")
+        for label, names in ((create_label, created), (update_label, updated)):
+            for name in names:
+                route = by_name[name]
+                self.stdout.write(
+                    f"  {label:<8} {name:<50} gateway={route['paths']}  "
+                    f"upstream={route['upstream_uri']}  {route['methods']}  "
+                    f"rewrite={route.get('rewrite_mode', 'static_uri')}"
+                )
+
+        if dry_run:
+            for name in skipped:
+                self.stdout.write(f"  {skip_label:<8} {name}")
+
+        for name in deleted:
+            self.stdout.write(f"  {delete_label:<8} {name}")
 
         self.stdout.write("")
+        summary = (
+            f"{len(created)} created, {len(updated)} updated, "
+            f"{len(skipped)} unchanged, {len(deleted)} deleted."
+        )
         self.stdout.write(
-            self.style.SUCCESS(
-                f"Done. {len(created)} created, {len(updated)} updated."
-            )
+            self.style.SUCCESS(f"{'Dry run.' if dry_run else 'Done.'} {summary}")
         )
