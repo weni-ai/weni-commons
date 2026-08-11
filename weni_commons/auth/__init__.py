@@ -4,6 +4,10 @@ from weni_commons.auth.authentication import (
     extract_bearer_token,
 )
 from weni_commons.auth.authenticators import WeniAuthentication
+from weni_commons.auth.connect import (
+    ConnectAuthorizationClient,
+    ConnectProjectAuthorization,
+)
 from weni_commons.auth.context import (
     TOKEN_TYPE_JWT,
     TOKEN_TYPE_KEYCLOAK,
@@ -27,7 +31,6 @@ from weni_commons.auth.permissions import (
     IsWeniAuthenticated,
     PermissionLevel,
 )
-from weni_commons.auth.resolve import resolve_session_user
 from weni_commons.auth.resolvers import (
     resolve_from_request,
     resolve_project_uuid_from_request,
@@ -45,6 +48,8 @@ from weni_commons.auth.token import WENI_AUTH_HEADER, extract_token
 
 __all__ = [
     "CanCommunicateInternally",
+    "ConnectAuthorizationClient",
+    "ConnectProjectAuthorization",
     "DynamoDBSessionTokenRepository",
     "HasProjectPermission",
     "IsWeniAuthenticated",
@@ -75,6 +80,5 @@ __all__ = [
     "resolve_from_request",
     "resolve_project_uuid_from_request",
     "resolve_vtex_account_from_request",
-    "resolve_session_user",
     "warm_cache",
 ]

@@ -31,6 +31,11 @@ alias from another service overwrites service + upstream (last-writer-wins).
 
 ``strip_path`` must stay false on allow-routes: with the full gateway path in
 ``paths``, ``strip_path=true`` would strip the entire match and forward ``/``.
+
+sync_to_kong() reconciles instead of blindly upserting: it reads the Kong state
+in bulk (routes and plugins, paginated), writes only what differs, and prunes
+the ``allow-*`` routes of this service that discovery no longer finds. Prune is
+on by default and guarded — see prune_routes().
 """
 import logging
 import os
@@ -52,6 +57,15 @@ logger = logging.getLogger(__name__)
 
 REQUEST_TRANSFORMER_PLUGIN = "request-transformer"
 PRE_FUNCTION_PLUGIN = "pre-function"
+
+ADMIN_TIMEOUT = 10
+PAGE_SIZE = 1000
+ROUTE_NAME_PREFIX = "allow-"
+ROUTE_TAG = "kong-sync"
+
+
+class PruneLimitExceeded(Exception):
+    """Prune would delete more routes than the safety threshold allows."""
 
 
 def _resolve_view_target(callback: Any) -> Optional[Any]:
@@ -355,31 +369,92 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
 
 
 def _list_route_plugins(admin_url: str, route_name: str) -> List[dict]:
-    listed = http.get(f"{admin_url}/routes/{route_name}/plugins", timeout=10)
+    listed = http.get(f"{admin_url}/routes/{route_name}/plugins", timeout=ADMIN_TIMEOUT)
     listed.raise_for_status()
     return listed.json().get("data", [])
 
 
-def _delete_plugins_named(admin_url: str, plugins: List[dict], names: set) -> None:
+def _paginate(admin_url: str, path: str) -> List[dict]:
+    """Collect every entity from a paginated Admin API collection."""
+    items: List[dict] = []
+    url = f"{admin_url}{path}?size={PAGE_SIZE}"
+
+    while url:
+        resp = http.get(url, timeout=ADMIN_TIMEOUT)
+        resp.raise_for_status()
+        payload = resp.json() or {}
+        items.extend(payload.get("data") or [])
+
+        next_url = payload.get("next")
+        if not next_url:
+            break
+        if not next_url.startswith("http"):
+            next_url = f"{admin_url}{next_url}"
+        if next_url == url:
+            break
+        url = next_url
+
+    return items
+
+
+def _list_all_routes(admin_url: str) -> List[dict]:
+    """All Kong routes, so route existence is checked globally (names are unique)."""
+    return _paginate(admin_url, "/routes")
+
+
+def _list_all_plugins(admin_url: str) -> Dict[str, List[dict]]:
+    """All route-scoped plugins, grouped by route id."""
+    grouped: Dict[str, List[dict]] = {}
+    for plugin in _paginate(admin_url, "/plugins"):
+        route_id = (plugin.get("route") or {}).get("id")
+        if route_id:
+            grouped.setdefault(route_id, []).append(plugin)
+    return grouped
+
+
+def _resolve_service_id(
+    admin_url: str, service: str, cache: Dict[str, Optional[str]]
+) -> Optional[str]:
+    """Service id for ``service``, memoized across routes of the same run."""
+    if service not in cache:
+        resp = http.get(f"{admin_url}/services/{service}", timeout=ADMIN_TIMEOUT)
+        if resp.status_code == 200:
+            cache[service] = (resp.json() or {}).get("id")
+        elif resp.status_code == 404:
+            cache[service] = None
+        else:
+            resp.raise_for_status()
+            cache[service] = None
+    return cache[service]
+
+
+def _prefix_tag(url_prefix: str) -> str:
+    return f"prefix:{url_prefix.rstrip('/')}"
+
+
+def _route_tags(url_prefix: str) -> List[str]:
+    return [ROUTE_TAG, _prefix_tag(url_prefix)]
+
+
+def _delete_plugins_named(admin_url: str, plugins: List[dict], names: set) -> List[dict]:
+    """Delete the named plugins and return the ones left untouched."""
+    remaining: List[dict] = []
     for plugin in plugins:
         if plugin.get("name") in names:
-            http.delete(f"{admin_url}/plugins/{plugin['id']}", timeout=10).raise_for_status()
+            http.delete(
+                f"{admin_url}/plugins/{plugin['id']}", timeout=ADMIN_TIMEOUT
+            ).raise_for_status()
             logger.info(
                 "sync_to_kong: removed plugin %s from route",
                 plugin.get("name"),
             )
+        else:
+            remaining.append(plugin)
+    return remaining
 
 
-def _ensure_uri_rewrite_plugin(admin_url: str, route_name: str, upstream_uri: str) -> None:
-    """
-    Ensure the route has a request-transformer that rewrites the URI to the
-    upstream Django path (service prefix removed).
-    """
-    plugins = _list_route_plugins(admin_url, route_name)
-    _delete_plugins_named(admin_url, plugins, {PRE_FUNCTION_PLUGIN})
-    plugins = _list_route_plugins(admin_url, route_name)
-
-    plugin_payload = {
+def _request_transformer_payload(upstream_uri: str) -> dict:
+    return {
         "name": REQUEST_TRANSFORMER_PLUGIN,
         "config": {
             "replace": {
@@ -387,39 +462,6 @@ def _ensure_uri_rewrite_plugin(admin_url: str, route_name: str, upstream_uri: st
             }
         },
     }
-
-    existing = next((p for p in plugins if p.get("name") == REQUEST_TRANSFORMER_PLUGIN), None)
-    if existing:
-        current_uri = (existing.get("config") or {}).get("replace", {}).get("uri")
-        if current_uri == upstream_uri:
-            logger.debug(
-                "sync_to_kong: route %s already has uri rewrite to %s",
-                route_name,
-                upstream_uri,
-            )
-            return
-        http.patch(
-            f"{admin_url}/plugins/{existing['id']}",
-            json=plugin_payload,
-            timeout=10,
-        ).raise_for_status()
-        logger.info(
-            "sync_to_kong: updated uri rewrite on %s -> %s",
-            route_name,
-            upstream_uri,
-        )
-        return
-
-    http.post(
-        f"{admin_url}/routes/{route_name}/plugins",
-        json=plugin_payload,
-        timeout=10,
-    ).raise_for_status()
-    logger.info(
-        "sync_to_kong: created uri rewrite on %s -> %s",
-        route_name,
-        upstream_uri,
-    )
 
 
 def _pre_function_payload(lua_source: str) -> dict:
@@ -431,41 +473,12 @@ def _pre_function_payload(lua_source: str) -> dict:
     }
 
 
-def _ensure_pre_function_plugin(admin_url: str, route_name: str, lua_source: str) -> None:
-    """Ensure route has pre-function with the given access Lua; drop request-transformer."""
-    plugins = _list_route_plugins(admin_url, route_name)
-    _delete_plugins_named(admin_url, plugins, {REQUEST_TRANSFORMER_PLUGIN})
-    plugins = _list_route_plugins(admin_url, route_name)
-
-    plugin_payload = _pre_function_payload(lua_source)
-    existing = next((p for p in plugins if p.get("name") == PRE_FUNCTION_PLUGIN), None)
-    if existing:
-        current = (existing.get("config") or {}).get("access") or []
-        if current == [lua_source]:
-            logger.debug("sync_to_kong: route %s already has matching pre-function", route_name)
-            return
-        http.patch(
-            f"{admin_url}/plugins/{existing['id']}",
-            json=plugin_payload,
-            timeout=10,
-        ).raise_for_status()
-        logger.info("sync_to_kong: updated pre-function on %s", route_name)
-        return
-
-    http.post(
-        f"{admin_url}/routes/{route_name}/plugins",
-        json=plugin_payload,
-        timeout=10,
-    ).raise_for_status()
-    logger.info("sync_to_kong: created pre-function on %s", route_name)
-
-
-def _ensure_prefix_strip_plugin(admin_url: str, route_name: str, url_prefix: str) -> None:
+def _prefix_strip_lua(url_prefix: str) -> str:
     """Strip KONG_URL_PREFIX from the request path, preserving the rest (incl. pk)."""
     prefix = url_prefix.rstrip("/")
     # Escape for Lua string literal.
     prefix_lua = prefix.replace("\\", "\\\\").replace('"', '\\"')
-    lua = (
+    return (
         f'local prefix = "{prefix_lua}"\n'
         "local path = kong.request.get_path()\n"
         "if path:sub(1, #prefix) == prefix then\n"
@@ -474,15 +487,9 @@ def _ensure_prefix_strip_plugin(admin_url: str, route_name: str, url_prefix: str
         "  kong.service.request.set_path(new_path)\n"
         "end"
     )
-    _ensure_pre_function_plugin(admin_url, route_name, lua)
 
 
-def _ensure_capture_rewrite_plugin(
-    admin_url: str,
-    route_name: str,
-    upstream_template: str,
-    url_prefix: str,
-) -> None:
+def _capture_rewrite_lua(upstream_template: str, url_prefix: str) -> str:
     """
     Rewrite URI to the Django upstream template using Kong named captures.
 
@@ -492,7 +499,7 @@ def _ensure_capture_rewrite_plugin(
     # Build Lua that substitutes {name} from uri captures into upstream template.
     template_lua = upstream_template.replace("\\", "\\\\").replace('"', '\\"')
     prefix_lua = url_prefix.rstrip("/").replace("\\", "\\\\").replace('"', '\\"')
-    lua = (
+    return (
         "local named = {}\n"
         "local ok, caps = pcall(kong.request.get_uri_captures)\n"
         "if ok and caps and caps.named then named = caps.named end\n"
@@ -504,23 +511,79 @@ def _ensure_capture_rewrite_plugin(
         "  kong.service.request.set_path(path)\n"
         "end"
     )
-    _ensure_pre_function_plugin(admin_url, route_name, lua)
 
 
-def _apply_rewrite_plugin(admin_url: str, route: Dict, url_prefix: str) -> None:
+def _desired_rewrite_plugin(route: Dict, url_prefix: str) -> dict:
+    """Plugin payload this route should carry, per its rewrite_mode."""
     mode = route.get("rewrite_mode") or "static_uri"
     upstream_uri = route["upstream_uri"]
-    route_name = route["name"]
 
     if mode == "strip_prefix":
-        _ensure_prefix_strip_plugin(admin_url, route_name, url_prefix)
-    elif mode == "alias_captures":
-        _ensure_capture_rewrite_plugin(admin_url, route_name, upstream_uri, url_prefix)
-    else:
-        if has_path_params(upstream_uri):
-            _ensure_prefix_strip_plugin(admin_url, route_name, url_prefix)
-        else:
-            _ensure_uri_rewrite_plugin(admin_url, route_name, upstream_uri)
+        return _pre_function_payload(_prefix_strip_lua(url_prefix))
+    if mode == "alias_captures":
+        return _pre_function_payload(_capture_rewrite_lua(upstream_uri, url_prefix))
+    if has_path_params(upstream_uri):
+        return _pre_function_payload(_prefix_strip_lua(url_prefix))
+    return _request_transformer_payload(upstream_uri)
+
+
+def _obsolete_plugin_name(desired_name: str) -> str:
+    if desired_name == REQUEST_TRANSFORMER_PLUGIN:
+        return PRE_FUNCTION_PLUGIN
+    return REQUEST_TRANSFORMER_PLUGIN
+
+
+def _plugin_config_matches(existing: dict, desired: dict) -> bool:
+    config = existing.get("config") or {}
+    desired_config = desired["config"]
+
+    if desired["name"] == REQUEST_TRANSFORMER_PLUGIN:
+        current = (config.get("replace") or {}).get("uri")
+        return current == desired_config["replace"]["uri"]
+
+    return (config.get("access") or []) == desired_config["access"]
+
+
+def _rewrite_plugin_in_sync(desired: dict, plugins: List[dict]) -> bool:
+    """Whether the route's plugins already match ``desired`` (no HTTP calls)."""
+    obsolete = _obsolete_plugin_name(desired["name"])
+    if any(plugin.get("name") == obsolete for plugin in plugins):
+        return False
+
+    existing = next((p for p in plugins if p.get("name") == desired["name"]), None)
+    if existing is None:
+        return False
+
+    return _plugin_config_matches(existing, desired)
+
+
+def _apply_rewrite_plugin(
+    admin_url: str, route_name: str, desired: dict, plugins: List[dict]
+) -> None:
+    remaining = _delete_plugins_named(
+        admin_url, plugins, {_obsolete_plugin_name(desired["name"])}
+    )
+    existing = next((p for p in remaining if p.get("name") == desired["name"]), None)
+
+    if existing:
+        if _plugin_config_matches(existing, desired):
+            return
+        http.patch(
+            f"{admin_url}/plugins/{existing['id']}",
+            json=desired,
+            timeout=ADMIN_TIMEOUT,
+        ).raise_for_status()
+        logger.info(
+            "sync_to_kong: updated %s on %s", desired["name"], route_name
+        )
+        return
+
+    http.post(
+        f"{admin_url}/routes/{route_name}/plugins",
+        json=desired,
+        timeout=ADMIN_TIMEOUT,
+    ).raise_for_status()
+    logger.info("sync_to_kong: created %s on %s", desired["name"], route_name)
 
 
 def _route_service_name(admin_url: str, existing_route: dict) -> str:
@@ -537,42 +600,182 @@ def _route_service_name(admin_url: str, existing_route: dict) -> str:
     service_id = service.get("id")
     if not service_id:
         return ""
-    resp = http.get(f"{admin_url}/services/{service_id}", timeout=10)
+    resp = http.get(f"{admin_url}/services/{service_id}", timeout=ADMIN_TIMEOUT)
     if resp.status_code != 200:
         return service_id
     return resp.json().get("name") or service_id
 
 
-def sync_to_kong(admin_url: str, service: str, routes: List[Dict]) -> Tuple[List[str], List[str]]:
-    """
-    Registers discovered routes in Kong via the Admin API.
+def _route_needs_patch(payload: Dict, existing: dict, service_id: Optional[str]) -> bool:
+    """Whether the live route diverges on any field this sync manages."""
+    if set(payload["paths"]) != set(existing.get("paths") or []):
+        return True
+    if set(payload["methods"]) != set(existing.get("methods") or []):
+        return True
+    if bool(payload["strip_path"]) != bool(existing.get("strip_path")):
+        return True
+    if set(payload["tags"]) != set(existing.get("tags") or []):
+        return True
+    if service_id and (existing.get("service") or {}).get("id") != service_id:
+        return True
+    return False
 
-    Idempotent upsert:
-      - creates the route when missing
-      - patches paths/methods/strip_path/service when the route already exists
-      - applies rewrite plugin based on rewrite_mode:
+
+def _path_under_prefix(path: str, url_prefix: str) -> bool:
+    candidate = path[1:] if path.startswith("~") else path
+    prefix = url_prefix.rstrip("/")
+    if not prefix:
+        return False
+    return candidate == prefix or candidate.startswith(prefix + "/")
+
+
+def _is_managed_route(route: dict, service_id: str, url_prefix: str) -> bool:
+    """
+    Whether this sync owns the route and may therefore delete it.
+
+    Ownership requires the route to sit on this service, to carry the ``allow-``
+    name prefix (so the default-block and hand-made routes are never touched),
+    and to be recognizable as ours — by our prefix tag, or, for routes written
+    before tagging, by serving a path under KONG_URL_PREFIX.
+
+    Matching the prefix tag rather than the generic ROUTE_TAG is what keeps a
+    foreign service's routes safe: ``api_gateway_expose`` defaults to
+    ``service="flows-service"``, so a repository that forgets ``service=`` lands
+    its routes on flows-service already tagged by its own sync.
+    """
+    name = route.get("name") or ""
+    if not name.startswith(ROUTE_NAME_PREFIX):
+        return False
+    if (route.get("service") or {}).get("id") != service_id:
+        return False
+    if _prefix_tag(url_prefix) in (route.get("tags") or []):
+        return True
+    return any(_path_under_prefix(p, url_prefix) for p in route.get("paths") or [])
+
+
+def prune_routes(
+    admin_url: str,
+    service_id: Optional[str],
+    url_prefix: str,
+    desired_names: set,
+    existing_routes: List[dict],
+    force: bool = False,
+    dry_run: bool = False,
+) -> List[str]:
+    """
+    Delete the allow-routes of this service that discovery no longer produces.
+
+    ``desired_names`` must carry every discovered route name, including those
+    targeting another Kong service, so a route moving across services in this
+    same run is not mistaken for an orphan.
+
+    Args:
+        admin_url:       Kong Admin API base URL
+        service_id:      Kong id of the service being synced
+        url_prefix:      KONG_URL_PREFIX of this service
+        desired_names:   Every route name produced by discover_routes()
+        existing_routes: Kong route snapshot taken before the upsert
+        force:           Bypass the volume threshold
+        dry_run:         Report the deletions without applying them
+
+    Returns:
+        Names of the deleted routes.
+
+    Raises:
+        PruneLimitExceeded: if the deletions exceed the safety threshold and
+            ``force`` is not set.
+    """
+    if not desired_names:
+        logger.warning("prune_routes: discovery is empty — skipping prune")
+        return []
+    if not service_id:
+        logger.warning("prune_routes: service id unavailable — skipping prune")
+        return []
+
+    owned = [r for r in existing_routes if _is_managed_route(r, service_id, url_prefix)]
+    orphans = [r for r in owned if (r.get("name") or "") not in desired_names]
+    if not orphans:
+        return []
+
+    limit = max(3, len(owned) // 2)
+    if len(orphans) > limit and not force:
+        names = ", ".join(sorted(r["name"] for r in orphans))
+        raise PruneLimitExceeded(
+            f"prune would delete {len(orphans)} of {len(owned)} managed route(s), "
+            f"above the safety limit of {limit}: {names}. "
+            "Re-run with --force-prune to confirm."
+        )
+
+    deleted: List[str] = []
+    for route in orphans:
+        name = route["name"]
+        if not dry_run:
+            http.delete(
+                f"{admin_url}/routes/{name}", timeout=ADMIN_TIMEOUT
+            ).raise_for_status()
+        deleted.append(name)
+        logger.info(
+            "sync_to_kong: deleted orphan route %s -> %s",
+            name,
+            route.get("paths"),
+        )
+
+    return deleted
+
+
+def sync_to_kong(
+    admin_url: str,
+    service: str,
+    routes: List[Dict],
+    prune: bool = True,
+    force_prune: bool = False,
+    dry_run: bool = False,
+) -> Tuple[List[str], List[str], List[str], List[str]]:
+    """
+    Reconciles discovered routes with Kong via the Admin API.
+
+    Reads the Kong state in bulk (routes and plugins), then per route:
+      - creates it when missing
+      - patches paths/methods/strip_path/tags/service only when they diverge
+      - writes the rewrite plugin only when it diverges:
           static_uri      → request-transformer replace.uri
           strip_prefix    → pre-function strip KONG_URL_PREFIX
           alias_captures  → pre-function rewrite with named captures
+      - leaves it untouched otherwise
+
+    Then, unless ``prune`` is off, deletes the allow-routes of ``service`` that
+    discovery no longer produces (see prune_routes).
 
     Alias routes (``allow-{alias}``) are last-writer-wins across services:
     PATCH reassigns ``service`` when another microservice claims the same alias.
 
     Args:
-        admin_url: Kong Admin API base URL, e.g. http://localhost:8001
-        service:   Fallback Kong service name when a route has no ``service`` key
-        routes:    Route definitions returned by discover_routes()
+        admin_url:   Kong Admin API base URL, e.g. http://localhost:8001
+        service:     Fallback Kong service name when a route has no ``service`` key
+        routes:      Route definitions returned by discover_routes()
+        prune:       Delete orphan allow-routes of ``service``
+        force_prune: Bypass the prune volume threshold
+        dry_run:     Compute the plan without writing to Kong
 
     Returns:
-        Tuple of (created route names, updated route names).
+        Tuple of (created, updated, skipped, deleted) route names.
 
     Raises:
         requests.HTTPError: if the Admin API returns an unexpected error.
+        PruneLimitExceeded: if prune exceeds the safety threshold.
     """
     admin_url = admin_url.rstrip("/")
     url_prefix = os.environ.get("KONG_URL_PREFIX", "").rstrip("/")
+    tags = _route_tags(url_prefix)
+
+    existing_routes = _list_all_routes(admin_url)
+    routes_by_name = {r["name"]: r for r in existing_routes if r.get("name")}
+    plugins_by_route = _list_all_plugins(admin_url)
+    service_ids: Dict[str, Optional[str]] = {}
+
     created: List[str] = []
     updated: List[str] = []
+    skipped: List[str] = []
 
     for route in routes:
         upstream_uri = route.get("upstream_uri")
@@ -582,40 +785,33 @@ def sync_to_kong(admin_url: str, service: str, routes: List[Dict]) -> Tuple[List
                 "re-run discover_routes() with the updated weni_commons"
             )
 
+        route_name = route["name"]
         route_service = route.get("service") or service
         payload = {
-            "name": route["name"],
+            "name": route_name,
             "paths": route["paths"],
             "methods": route["methods"],
             "strip_path": route["strip_path"],
+            "tags": tags,
             "service": {"name": route_service},
         }
+        desired_plugin = _desired_rewrite_plugin(route, url_prefix)
+        existing = routes_by_name.get(route_name)
 
-        check = http.get(
-            f"{admin_url}/routes/{route['name']}",
-            timeout=10,
-        )
-
-        if check.status_code == 200:
-            existing = check.json()
-            previous_service = _route_service_name(admin_url, existing)
-            if previous_service and previous_service != route_service:
-                logger.warning(
-                    "sync_to_kong: overwriting route %s: service %s -> %s",
-                    route["name"],
-                    previous_service,
-                    route_service,
-                )
-            http.patch(
-                f"{admin_url}/routes/{route['name']}",
-                json=payload,
-                timeout=10,
-            ).raise_for_status()
-            _apply_rewrite_plugin(admin_url, route, url_prefix)
-            updated.append(route["name"])
+        if existing is None:
+            if not dry_run:
+                # POST under the target service; the service is implied by the URL.
+                create_payload = {k: v for k, v in payload.items() if k != "service"}
+                http.post(
+                    f"{admin_url}/services/{route_service}/routes",
+                    json=create_payload,
+                    timeout=ADMIN_TIMEOUT,
+                ).raise_for_status()
+                _apply_rewrite_plugin(admin_url, route_name, desired_plugin, [])
+            created.append(route_name)
             logger.info(
-                "sync_to_kong: updated route %s -> %s (upstream %s, mode %s, service %s)",
-                route["name"],
+                "sync_to_kong: created route %s -> %s (upstream %s, mode %s, service %s)",
+                route_name,
                 route["paths"],
                 upstream_uri,
                 route.get("rewrite_mode", "static_uri"),
@@ -623,31 +819,54 @@ def sync_to_kong(admin_url: str, service: str, routes: List[Dict]) -> Tuple[List
             )
             continue
 
-        if check.status_code != 404:
-            check.raise_for_status()
+        target_service_id = _resolve_service_id(admin_url, route_service, service_ids)
+        plugins = plugins_by_route.get(existing.get("id"), [])
+        route_diverged = _route_needs_patch(payload, existing, target_service_id)
+        plugin_diverged = not _rewrite_plugin_in_sync(desired_plugin, plugins)
 
-        # POST under the target service; body also carries service for clarity.
-        create_payload = {
-            "name": route["name"],
-            "paths": route["paths"],
-            "methods": route["methods"],
-            "strip_path": route["strip_path"],
-        }
-        http.post(
-            f"{admin_url}/services/{route_service}/routes",
-            json=create_payload,
-            timeout=10,
-        ).raise_for_status()
-        _apply_rewrite_plugin(admin_url, route, url_prefix)
+        if not route_diverged and not plugin_diverged:
+            skipped.append(route_name)
+            logger.debug("sync_to_kong: route %s already in sync", route_name)
+            continue
 
-        created.append(route["name"])
+        if route_diverged:
+            if target_service_id and (existing.get("service") or {}).get("id") != target_service_id:
+                logger.warning(
+                    "sync_to_kong: overwriting route %s: service %s -> %s",
+                    route_name,
+                    _route_service_name(admin_url, existing),
+                    route_service,
+                )
+            if not dry_run:
+                http.patch(
+                    f"{admin_url}/routes/{route_name}",
+                    json=payload,
+                    timeout=ADMIN_TIMEOUT,
+                ).raise_for_status()
+
+        if plugin_diverged and not dry_run:
+            _apply_rewrite_plugin(admin_url, route_name, desired_plugin, plugins)
+
+        updated.append(route_name)
         logger.info(
-            "sync_to_kong: created route %s -> %s (upstream %s, mode %s, service %s)",
-            route["name"],
+            "sync_to_kong: updated route %s -> %s (upstream %s, mode %s, service %s)",
+            route_name,
             route["paths"],
             upstream_uri,
             route.get("rewrite_mode", "static_uri"),
             route_service,
         )
 
-    return created, updated
+    deleted: List[str] = []
+    if prune:
+        deleted = prune_routes(
+            admin_url,
+            _resolve_service_id(admin_url, service, service_ids),
+            url_prefix,
+            {r["name"] for r in routes},
+            existing_routes,
+            force=force_prune,
+            dry_run=dry_run,
+        )
+
+    return created, updated, skipped, deleted
