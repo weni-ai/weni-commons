@@ -429,11 +429,29 @@ def _resolve_service_id(
 
 
 def _prefix_tag(url_prefix: str) -> str:
-    return f"prefix:{url_prefix.rstrip('/')}"
+    """
+    Ownership tag for this service's prefix.
+
+    Uses ``prefix-<slug>`` (e.g. ``prefix-flows``) instead of ``prefix:/flows``.
+    Older Kong builds reject ``:`` inside tags with a schema-violation 400.
+    """
+    return f"prefix-{url_prefix.strip('/')}"
 
 
 def _route_tags(url_prefix: str) -> List[str]:
     return [ROUTE_TAG, _prefix_tag(url_prefix)]
+
+
+def _raise_for_status(response, action: str) -> None:
+    """Like ``raise_for_status``, but includes Kong's response body in the error."""
+    try:
+        response.raise_for_status()
+    except http.HTTPError as exc:
+        body = (response.text or "").strip()
+        detail = f"{action}: {exc}"
+        if body:
+            detail = f"{detail} — {body}"
+        raise http.HTTPError(detail, response=response) from exc
 
 
 def _delete_plugins_named(admin_url: str, plugins: List[dict], names: set) -> List[dict]:
@@ -802,11 +820,15 @@ def sync_to_kong(
             if not dry_run:
                 # POST under the target service; the service is implied by the URL.
                 create_payload = {k: v for k, v in payload.items() if k != "service"}
-                http.post(
+                create_resp = http.post(
                     f"{admin_url}/services/{route_service}/routes",
                     json=create_payload,
                     timeout=ADMIN_TIMEOUT,
-                ).raise_for_status()
+                )
+                _raise_for_status(
+                    create_resp,
+                    f"creating route {route_name} (payload={create_payload!r})",
+                )
                 _apply_rewrite_plugin(admin_url, route_name, desired_plugin, [])
             created.append(route_name)
             logger.info(
@@ -838,11 +860,15 @@ def sync_to_kong(
                     route_service,
                 )
             if not dry_run:
-                http.patch(
+                patch_resp = http.patch(
                     f"{admin_url}/routes/{route_name}",
                     json=payload,
                     timeout=ADMIN_TIMEOUT,
-                ).raise_for_status()
+                )
+                _raise_for_status(
+                    patch_resp,
+                    f"updating route {route_name} (payload={payload!r})",
+                )
 
         if plugin_diverged and not dry_run:
             _apply_rewrite_plugin(admin_url, route_name, desired_plugin, plugins)

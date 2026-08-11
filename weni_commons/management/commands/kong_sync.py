@@ -30,18 +30,31 @@ bulk and only the routes that are missing or divergent are written. Routes this
 service exposed before and no longer decorates are deleted (prune), which is on
 by default — pass --no-prune to keep them.
 
+Configuration:
+    KONG_URL_PREFIX, KONG_SERVICE and KONG_ADMIN_URL are read from the host
+    project's Django settings first, then from the environment. A command-line
+    flag overrides both. KONG_URL_PREFIX and KONG_SERVICE are required;
+    KONG_ADMIN_URL falls back to http://localhost:8001.
+
 Required setup:
     - Add "weni_commons" to INSTALLED_APPS so Django discovers this command.
-    - Set KONG_URL_PREFIX in the environment (e.g. /flows, /nexus).
     - KONG_ADMIN_URL must be reachable, including for --dry-run, since the plan
       is computed against the live Kong state.
 
 Usage:
-    # Using environment variables (recommended for CI/CD)
-    KONG_URL_PREFIX=/flows KONG_ADMIN_URL=http://kong-admin:8001 python manage.py kong_sync
+    # Using Django settings (recommended)
+    #   KONG_URL_PREFIX = "/flows"
+    #   KONG_SERVICE = "flows-service"
+    #   KONG_ADMIN_URL = "http://kong-admin:8001"
+    python manage.py kong_sync
+
+    # Using environment variables
+    KONG_URL_PREFIX=/flows KONG_SERVICE=flows-service \\
+    KONG_ADMIN_URL=http://kong-admin:8001 python manage.py kong_sync
 
     # Passing arguments explicitly
-    python manage.py kong_sync --url-prefix /flows --kong-addr http://localhost:8001
+    python manage.py kong_sync --url-prefix /flows --service flows-service \\
+      --kong-addr http://localhost:8001
 
     # Preview without applying
     python manage.py kong_sync --dry-run
@@ -58,6 +71,9 @@ from importlib import import_module
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
+import requests
+
+from weni_commons.kong.config import resolve_config
 from weni_commons.kong.sync import PruneLimitExceeded, discover_routes, sync_to_kong
 
 
@@ -67,18 +83,19 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--kong-addr",
-            default=os.environ.get("KONG_ADMIN_URL", "http://localhost:8001"),
-            help="Kong Admin API base URL (env: KONG_ADMIN_URL)",
+            default=resolve_config("KONG_ADMIN_URL", "http://localhost:8001"),
+            help="Kong Admin API base URL (setting/env: KONG_ADMIN_URL)",
         )
         parser.add_argument(
             "--service",
-            default=os.environ.get("KONG_SERVICE", "flows-service"),
-            help="Kong service name to attach routes to (env: KONG_SERVICE)",
+            default=resolve_config("KONG_SERVICE"),
+            help="Kong service name to attach routes to (setting/env: KONG_SERVICE)",
         )
         parser.add_argument(
             "--url-prefix",
-            default=os.environ.get("KONG_URL_PREFIX"),
-            help="Gateway path prefix for this service, e.g. /flows (env: KONG_URL_PREFIX)",
+            default=resolve_config("KONG_URL_PREFIX"),
+            help="Gateway path prefix for this service, e.g. /flows "
+            "(setting/env: KONG_URL_PREFIX)",
         )
         parser.add_argument(
             "--suffix",
@@ -104,18 +121,30 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        url_prefix = options["url_prefix"]
+        url_prefix = (options["url_prefix"] or "").strip()
         if not url_prefix:
             raise CommandError(
-                "--url-prefix is required, or set the KONG_URL_PREFIX environment variable"
+                "--url-prefix is required, or set KONG_URL_PREFIX in your Django "
+                "settings or environment"
             )
+
+        # No default on purpose: prune deletes routes attached to this service,
+        # so an implicit value could reach another service's routes.
+        service = (options["service"] or "").strip()
+        if not service:
+            raise CommandError(
+                "--service is required, or set KONG_SERVICE in your Django settings "
+                "or environment"
+            )
+        options["service"] = service
 
         # Required for --dry-run too: the plan is diffed against the live state.
         kong_addr = (options["kong_addr"] or "").strip()
         if not kong_addr:
             raise CommandError(
-                "--kong-addr is required, or set the KONG_ADMIN_URL environment variable "
-                "(it is currently empty — check that the KONG_ADMIN_URL secret is configured)"
+                "--kong-addr is required, or set KONG_ADMIN_URL in your Django settings "
+                "or environment (it is currently empty — check that the KONG_ADMIN_URL "
+                "secret is configured)"
             )
         if not kong_addr.startswith(("http://", "https://")):
             raise CommandError(
@@ -156,6 +185,10 @@ class Command(BaseCommand):
                 dry_run=dry_run,
             )
         except PruneLimitExceeded as exc:
+            raise CommandError(str(exc)) from exc
+        except requests.HTTPError as exc:
+            # Surface Kong Admin API bodies (e.g. schema violation on tags/paths)
+            # instead of a bare status line.
             raise CommandError(str(exc)) from exc
 
         by_name = {route["name"]: route for route in routes}
