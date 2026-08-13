@@ -71,6 +71,8 @@ from importlib import import_module
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
+import requests
+
 from weni_commons.kong.config import resolve_config
 from weni_commons.kong.sync import PruneLimitExceeded, discover_routes, sync_to_kong
 
@@ -183,6 +185,10 @@ class Command(BaseCommand):
                 dry_run=dry_run,
             )
         except PruneLimitExceeded as exc:
+            raise CommandError(str(exc)) from exc
+        except requests.HTTPError as exc:
+            # Surface Kong Admin API bodies (e.g. schema violation on tags/paths)
+            # instead of a bare status line.
             raise CommandError(str(exc)) from exc
 
         by_name = {route["name"]: route for route in routes}
