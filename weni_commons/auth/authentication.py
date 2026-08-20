@@ -29,6 +29,7 @@ def extract_bearer_token(request) -> Optional[str]:
 class SessionUser:
     is_authenticated = True
     is_anonymous = False
+    is_active = True
 
     def __init__(self, email: str) -> None:
         self.email = email
