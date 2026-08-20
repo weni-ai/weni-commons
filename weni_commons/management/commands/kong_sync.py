@@ -4,6 +4,9 @@ Management command: kong_sync
 Discovers all views decorated with @api_gateway_expose in the project's URL
 configuration and registers them as routes in Kong via the Admin API.
 
+Supports APIView classes, DRF ViewSets (``callback.cls``), and method-level
+decorators on ``@action`` / ``list`` / ``retrieve``.
+
 Without alias, client URLs keep the service prefix:
     {KONG_URL_PREFIX}/api/v2/contacts.json   e.g. /flows/api/v2/contacts.json
 
@@ -12,11 +15,15 @@ With ``alias`` on @api_gateway_expose, three public paths are registered:
     {KONG_URL_PREFIX}/{alias}                e.g. /flows/events    (compat)
     {KONG_URL_PREFIX}/api/v2/....json        e.g. /flows/api/v2/…  (compat)
 
+Detail ViewSet routes use Kong regex paths (e.g. ``(?<pk>[^/]+)``). Alias may
+include the same placeholders: ``alias="dashboards/{pk}/widgets"``.
+
 The Kong route for an alias is named ``allow-{alias}`` and is last-writer-wins:
 another service that syncs the same alias overwrites service + upstream.
 
-Upstream requests are rewritten to the Django path via a request-transformer
-plugin on each allow-route.
+Upstream rewrite:
+    - Static paths → request-transformer ``replace.uri``
+    - Parameterized paths → pre-function (strip prefix or rewrite captures)
 
 Required setup:
     - Add "weni_commons" to INSTALLED_APPS so Django discovers this command.
@@ -108,9 +115,11 @@ class Command(BaseCommand):
         if options["dry_run"]:
             self.stdout.write(f"\nDry run — {len(routes)} route(s) discovered:\n")
             for route in routes:
+                mode = route.get("rewrite_mode", "static_uri")
                 self.stdout.write(
                     f"  {route['name']:<50} gateway={route['paths']}  "
-                    f"upstream={route['upstream_uri']}  {route['methods']}"
+                    f"upstream={route['upstream_uri']}  {route['methods']}  "
+                    f"rewrite={mode}"
                 )
             self.stdout.write("")
             return
