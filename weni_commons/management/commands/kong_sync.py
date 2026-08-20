@@ -1,14 +1,22 @@
 """
 Management command: kong_sync
 
-Discovers all views decorated with @kong_expose in the project's URL
+Discovers all views decorated with @api_gateway_expose in the project's URL
 configuration and registers them as routes in Kong via the Admin API.
 
-Client URLs keep the service prefix:
+Without alias, client URLs keep the service prefix:
     {KONG_URL_PREFIX}/api/v2/contacts.json   e.g. /flows/api/v2/contacts.json
 
-Upstream requests are rewritten to the Django path (prefix removed) via a
-request-transformer plugin on each allow-route.
+With ``alias`` on @api_gateway_expose, three public paths are registered:
+    /{alias}                                 e.g. /events          (flat)
+    {KONG_URL_PREFIX}/{alias}                e.g. /flows/events    (compat)
+    {KONG_URL_PREFIX}/api/v2/....json        e.g. /flows/api/v2/…  (compat)
+
+The Kong route for an alias is named ``allow-{alias}`` and is last-writer-wins:
+another service that syncs the same alias overwrites service + upstream.
+
+Upstream requests are rewritten to the Django path via a request-transformer
+plugin on each allow-route.
 
 Required setup:
     - Add "weni_commons" to INSTALLED_APPS so Django discovers this command.
@@ -34,7 +42,7 @@ from weni_commons.kong.sync import discover_routes, sync_to_kong
 
 
 class Command(BaseCommand):
-    help = "Sync @kong_expose views to Kong API Gateway via the Admin API"
+    help = "Sync @api_gateway_expose views to Kong API Gateway via the Admin API"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -70,17 +78,31 @@ class Command(BaseCommand):
                 "--url-prefix is required, or set the KONG_URL_PREFIX environment variable"
             )
 
+        kong_addr = (options["kong_addr"] or "").strip()
+        if not options["dry_run"]:
+            if not kong_addr:
+                raise CommandError(
+                    "--kong-addr is required, or set the KONG_ADMIN_URL environment variable "
+                    "(it is currently empty — check that the KONG_ADMIN_URL secret is configured)"
+                )
+            if not kong_addr.startswith(("http://", "https://")):
+                raise CommandError(
+                    "KONG_ADMIN_URL must start with http:// or https:// "
+                    f"(got: {kong_addr!r}). Example: http://kong-admin.example.com:8001"
+                )
+        options["kong_addr"] = kong_addr
+
         # Ensure the env is set so discover_routes() can read it
         os.environ["KONG_URL_PREFIX"] = url_prefix
 
         # Importing the root URL conf causes all views to be imported,
-        # which triggers every @kong_expose decorator in the project.
+        # which triggers every @api_gateway_expose decorator in the project.
         import_module(settings.ROOT_URLCONF)
 
         routes = discover_routes(suffix=options["suffix"])
 
         if not routes:
-            self.stdout.write(self.style.WARNING("No @kong_expose routes found."))
+            self.stdout.write(self.style.WARNING("No @api_gateway_expose routes found."))
             return
 
         if options["dry_run"]:
