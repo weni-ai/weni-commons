@@ -4,6 +4,7 @@ from weni_commons.auth.authentication import (
     extract_bearer_token,
 )
 from weni_commons.auth.authenticators import WeniAuthentication
+from weni_commons.auth.connect import ConnectAuthorizationClient
 from weni_commons.auth.context import (
     TOKEN_TYPE_JWT,
     TOKEN_TYPE_KEYCLOAK,
@@ -23,6 +24,7 @@ from weni_commons.auth.interfaces import UserPermissionsServiceInterface
 from weni_commons.auth.mixins import WeniAuthViewMixin
 from weni_commons.auth.permissions import (
     CanCommunicateInternally,
+    ConnectProjectAuthorization,
     HasProjectPermission,
     IsWeniAuthenticated,
     PermissionLevel,
@@ -45,6 +47,8 @@ from weni_commons.auth.token import WENI_AUTH_HEADER, extract_token
 
 __all__ = [
     "CanCommunicateInternally",
+    "ConnectAuthorizationClient",
+    "ConnectProjectAuthorization",
     "DynamoDBSessionTokenRepository",
     "HasProjectPermission",
     "IsWeniAuthenticated",

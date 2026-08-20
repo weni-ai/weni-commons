@@ -47,6 +47,7 @@ class SessionTokenAuthentication(BaseAuthentication):
 
     When ``WENI_SESSION_TOKEN_ORG_MODEL`` is configured, the authenticated user is
     a real Django user with org attached (see ``resolve_session_user``).
+    On success, ``resolve_session_user`` also sets ``request.project_uuid``.
     """
 
     www_authenticate_realm = "api"
