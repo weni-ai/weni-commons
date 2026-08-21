@@ -2,8 +2,9 @@ from enum import Enum
 
 
 class Module(str, Enum):
-    NEXUS = "NEXUS"
+    FLOWS = "FLOWS"
     LIVE_DESK = "LIVE_DESK"
+    NEXUS = "NEXUS"
 
     @classmethod
     def to_choices(cls):
