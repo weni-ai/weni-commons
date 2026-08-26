@@ -7,8 +7,10 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import override_settings
 
+from weni_commons.kong import api_gateway_expose
 from weni_commons.kong.sync import (
     PruneLimitExceeded,
+    discover_routes,
     prune_routes,
     sync_to_kong,
 )
@@ -297,7 +299,7 @@ def test_prune_keeps_protected_routes():
             paths=["/nexus/api/v2/foreign.json"],
             tags=[],
         ),
-        # Another repo forgot service=, so its route landed here already tagged.
+        # A route from another prefix that landed on this service already tagged.
         kong_route(
             name="allow-foreign-tagged",
             id="route-foreign-tagged",
@@ -360,13 +362,67 @@ def test_prune_above_threshold_runs_with_force():
     assert len(kong.methods("DELETE")) == 4
 
 
-def test_command_requires_service(monkeypatch):
+@override_settings(ROOT_URLCONF="tests.urls")
+def test_command_derives_service_from_prefix(monkeypatch):
+    monkeypatch.delenv("KONG_SERVICE", raising=False)
+    captured = {}
+
+    def fake_discover(**kwargs):
+        captured["default_service"] = kwargs.get("default_service")
+        return []
+
+    with patch(
+        "weni_commons.management.commands.kong_sync.discover_routes", fake_discover
+    ):
+        stdout = StringIO()
+        call_command(
+            "kong_sync",
+            "--url-prefix",
+            PREFIX,
+            "--kong-addr",
+            ADMIN,
+            stdout=stdout,
+        )
+
+    assert captured["default_service"] == "flows-service"
+    assert "No @api_gateway_expose routes found" in stdout.getvalue()
+
+
+@override_settings(ROOT_URLCONF="tests.urls")
+def test_command_explicit_service_overrides_derived_name(monkeypatch):
+    monkeypatch.delenv("KONG_SERVICE", raising=False)
+    captured = {}
+
+    def fake_discover(**kwargs):
+        captured["default_service"] = kwargs.get("default_service")
+        return []
+
+    with patch(
+        "weni_commons.management.commands.kong_sync.discover_routes", fake_discover
+    ):
+        call_command(
+            "kong_sync",
+            "--url-prefix",
+            PREFIX,
+            "--service",
+            "custom-service",
+            "--kong-addr",
+            ADMIN,
+            stdout=StringIO(),
+        )
+
+    assert captured["default_service"] == "custom-service"
+
+
+def test_command_rejects_multi_segment_prefix_when_deriving_service(monkeypatch):
     monkeypatch.delenv("KONG_SERVICE", raising=False)
 
     with pytest.raises(CommandError) as excinfo:
-        call_command("kong_sync", "--url-prefix", PREFIX)
+        call_command(
+            "kong_sync", "--url-prefix", "/foo/bar", "--kong-addr", ADMIN
+        )
 
-    assert "KONG_SERVICE" in str(excinfo.value)
+    assert "single path segment" in str(excinfo.value)
 
 
 def test_command_requires_url_prefix(monkeypatch):
@@ -392,3 +448,77 @@ def test_command_runs_with_configuration_from_settings(monkeypatch):
     call_command("kong_sync", stdout=stdout)
 
     assert "No @api_gateway_expose routes found" in stdout.getvalue()
+
+
+def test_decorator_defaults_service_to_none():
+    @api_gateway_expose
+    class Endpoint:
+        pass
+
+    assert Endpoint._kong_service is None
+
+
+def test_decorator_keeps_explicit_service():
+    @api_gateway_expose(service="insights-service")
+    class Endpoint:
+        pass
+
+    assert Endpoint._kong_service == "insights-service"
+
+
+@override_settings(ROOT_URLCONF="tests.openapi_urls")
+def test_discover_routes_fills_none_service_from_prefix(monkeypatch):
+    monkeypatch.setenv("KONG_URL_PREFIX", PREFIX)
+    routes = {route["name"]: route for route in discover_routes()}
+
+    assert routes["allow-contacts"]["service"] == "flows-service"
+    assert routes["allow-dashboards-pk-widgets"]["service"] == "insights-service"
+
+
+@override_settings(ROOT_URLCONF="tests.openapi_urls")
+def test_discover_routes_uses_command_service_for_none(monkeypatch):
+    monkeypatch.setenv("KONG_URL_PREFIX", PREFIX)
+    routes = {
+        route["name"]: route
+        for route in discover_routes(default_service="billing-service")
+    }
+
+    assert routes["allow-contacts"]["service"] == "billing-service"
+    assert routes["allow-dashboards-pk-widgets"]["service"] == "insights-service"
+
+
+def test_ensure_service_derives_service_from_prefix(monkeypatch):
+    monkeypatch.delenv("KONG_SERVICE", raising=False)
+    stdout = StringIO()
+
+    call_command(
+        "kong_ensure_service",
+        "--url-prefix",
+        "/billing",
+        "--url",
+        "https://billing.example.com",
+        "--dry-run",
+        stdout=stdout,
+    )
+
+    assert "billing-service" in stdout.getvalue()
+
+
+def test_ensure_service_explicit_service_overrides_derived_name(monkeypatch):
+    monkeypatch.delenv("KONG_SERVICE", raising=False)
+    stdout = StringIO()
+
+    call_command(
+        "kong_ensure_service",
+        "--url-prefix",
+        "/billing",
+        "--service",
+        "custom-billing",
+        "--url",
+        "https://billing.example.com",
+        "--dry-run",
+        stdout=stdout,
+    )
+
+    assert "custom-billing" in stdout.getvalue()
+    assert "billing-service" not in stdout.getvalue()

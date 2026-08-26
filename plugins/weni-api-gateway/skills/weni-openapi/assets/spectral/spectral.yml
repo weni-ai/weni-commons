@@ -1,0 +1,200 @@
+# Snapshot of VTEX's Developer Portal ruleset, copied from
+# https://github.com/vtex/openapi-schemas .spectral.yml on 2026-08-25.
+# Re-copy from that repository when the Portal rules change. Do not edit
+# rules here to silence violations — fix the generated schema instead.
+extends: ["spectral:oas"]
+
+functions:
+  - definedNotExample
+  - noChainedRefsInComponents
+rules:
+  path-params: off
+  operation-operationId: off
+  oas3-examples-value-or-externalValue: off
+  oas3-unused-component: off
+  info-contact: off
+  write-email-not-e-mail:
+    description: Should use email instead of e-mail in descriptions
+    severity: error
+    given: "$..*[?(@property === 'description')]"	
+    then:
+      function: pattern
+      functionOptions:
+        notMatch: "\\be-mail\\b"
+
+  must-include-operation-summary:
+    description: Operation summary should be included
+    severity: error
+    given: "$.paths.*[?( @property === 'get' || @property === 'put' || @property === 'post' || @property === 'delete' || @property === 'options' || @property === 'head' || @property === 'patch' || @property === 'trace' )]"
+    then:
+      - field: "summary"
+        function: defined        
+
+  must-include-response-examples:
+    description: At least one example must be included for each API response, declared as a sibling of `schema` at the content-type level. Use `example` (singular) for a single payload, or `examples` (plural, an object of named entries with `summary` and `value`) when the schema uses `anyOf`/`oneOf` and each branch needs its own illustrative payload.
+    severity: error
+    given: "$.paths..responses.*.content.*"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          anyOf:
+            - required: ["example"]
+            - required: ["examples"]
+
+  must-include-response-schemas:
+    description: Each API response must contain a schema
+    severity: error
+    given: "$.paths..responses.*.content.*"
+    then:
+      - field: "schema"
+        function: defined
+
+  no-empty-titles:
+    description: There can be no empty titles in schemas. Removing this title field from the property will solve this issue. If this title is inside an example, please fill it with a valid value.
+    severity: error
+    given: "$..[?(@ && @.title=='')]~"
+    then:
+      function: pattern
+      functionOptions:
+        match: "example"
+
+  summaries-should-be-in-sentence-case:
+    description: All endpoint summaries should use sentence case (capitalize only the first letter) and never contain periods (`.`). Exceptions include product names and some specific terms (e.g., SKU, ID).
+    severity: warn
+    given: "$.paths.*.*[?( @property === 'summary')]"
+    then:
+      function: pattern
+      functionOptions:
+        match: "^[A-Z](?:[a-z0-9 ]*(?:VTEX|TEX|DO|ID|EAN|URL|JSON|B2B|)|(|OAuth|Customer Credit|CMS|appKey|appToken|autoApprove|-|,|API|DKIM|SKU|SLA|Change order|'))*[a-z0-9 ]*$"
+
+  no-empty-descriptions:
+    description: No empty descriptions allowed. Make sure that this description is a valid string that does not start with a line break (\n or \r). If this description is inside an example, please fill it with a valid value.
+    severity: error
+    given: "$..*[?(@property === 'description')]"
+    then:
+      function: pattern
+      functionOptions:
+        match: "^(?!\\s*$).+"
+
+  parameters-description:
+    description: Each parameter must contain a description.
+    severity: error
+    given: "$.paths.*.*.parameters[*]"
+    then:
+      field: "description"
+      function: defined
+
+  properties-description:
+    description: Each request or response body property must contain a description.
+    severity: error
+    given: "$..*[?(@ && @property != 'schema' && (@.type=='object' || @.type=='array' || @.type=='integer' || @.type=='boolean' || @.type=='string' || @.type=='number'))]"
+    then:
+      field: "description"
+      function: definedNotExample
+
+  array-items:
+    description: Each array field must contain an "items" property.
+    severity: error
+    given: "$..[?(@ && @.type == 'array')]"
+    then:
+      field: "items"
+      function: defined
+
+  request-body-items-type:
+    description: Each request body array "items" property must contain a type.
+    severity: warn
+    given: "$.paths.*.*.requestBody.content.*.schema..items"
+    then:
+      field: "type"
+      function: defined
+
+  response-body-items-type:
+    description: Each array "items property" in the response body schema must contain a type. 
+    severity: warn
+    given: "$.paths.*.*.responses.*.content.*.schema..items"
+    then:
+      field: "type"
+      function: defined
+
+  response-body-objects-arrays-example:
+    description: Response body fields should not contain the "example" field. The response example corresponds to the whole schema.
+    severity: warn
+    given: "$..responses..*[?(@ && (@.type=='object' || @.type=='array' || @.type=='integer' || @.type=='boolean' || @.type=='string'))]"
+    then:
+      field: "example"
+      function: undefined
+
+  endpoint-permissions:
+    description: Endpoint descriptions must include a "Permissions" section, with information about License Manager resources and roles.
+    severity: warn
+    given: "$.paths.*.*.description"
+    then:
+      function: pattern
+      functionOptions:
+        match: "## Permissions"
+
+  must-end-descriptions-with-period:
+    description: All field descriptions must end with a period (`.`) or with an unordered list, even if its items don't end in periods. 
+    severity: error
+    given: "$..properties.*[?(@property === 'description')]"
+    then:
+      function: pattern
+      functionOptions:
+        match: ".*(?:\\.$|\\n- |\\r- )"
+
+  status-code-descriptions-format:
+    description: Status code descriptions must be in title case without a period. If there is an additional sentence after line breaks, it should use sentence case and end with a period (e.g., "OK" or "OK \n\n Product created successfully.").
+    severity: error
+    given: "$.paths..responses.*.description"
+    then:
+      function: pattern
+      functionOptions:
+        match: "^[A-Z0-9][A-Za-z0-9]*(?:\\s+[A-Z][A-Za-z0-9]*)*(?:\\s*[\\r\\n]+\\s*[A-Z][A-Za-z0-9]*(?:\\s+[A-Za-z0-9]*)*\\.)?$"
+
+  tags-should-be-in-sentence-case:
+    description: All tags should use sentence case (capitalize only the first letter). Exceptions include product names and specific terms (e.g., VTEX, SKU, ID, API, Session Manager). To add exceptions, edit the regex pattern in the 'match' field.
+    severity: error
+    given:
+      - "$.tags[*].name"
+      - "$.paths.*.*.tags[*]"
+    then:
+      function: pattern
+      functionOptions:
+        match: "^(?:VTEX|SKU|SKUs|ID|API|CMS|EAN|URL|JSON|OAuth|SLA|Session Manager|Storefront Permissions|Storefront Roles|Custom Storefront Roles|Custom Storefront Resources|B2B|Delivery Promise|[A-Z][a-z0-9]*(?:-[a-z][a-z0-9]*)*)(?:\\s+(?:VTEX|SKU|SKUs|ID|API|CMS|EAN|URL|JSON|OAuth|SLA|Session Manager|Storefront Permissions|Storefront Roles|Custom Storefront Roles|Custom Storefront Resources|B2B|Delivery Promise|[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*))*$"
+
+  request-example-parallel-to-schema:
+    description: The request body must declare an example at the content-type level (as a sibling of `schema`), not nested inside schema properties. Use `example` (singular) for a single payload, or `examples` (plural, an object of named entries with `summary` and `value`) when the schema uses `anyOf`/`oneOf` and each branch needs its own illustrative payload.
+    severity: error
+    given: "$.paths..requestBody.content.*"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          anyOf:
+            - required: ["example"]
+            - required: ["examples"]
+
+  anyof-oneof-branches-must-be-documented:
+    description: Each subschema of an `anyOf` or `oneOf` (in a request body or response body) must declare both a `title` and a `description`, per the VTEX API reference guidelines (sections 4.7.1 and 4.8.1). The rendered API reference uses the `title` to label each variant tab and the `description` to explain when that variant applies; without them, consumers see anonymous "Option 1 / Option 2" entries and cannot tell the branches apart.
+    severity: error
+    given:
+      - "$.paths.*.*.requestBody.content.*.schema..anyOf[*]"
+      - "$.paths.*.*.requestBody.content.*.schema..oneOf[*]"
+      - "$.paths.*.*.responses.*.content.*.schema..anyOf[*]"
+      - "$.paths.*.*.responses.*.content.*.schema..oneOf[*]"
+    then:
+      - field: "title"
+        function: defined
+      - field: "description"
+        function: defined
+
+  no-chained-refs-in-components:
+    description: Components cannot use a $ref that points to another component which also contains a $ref (chained refs are not allowed). This may cause rendering errors on the Developer Portal. When this error is shown, check the $ref at the next level and rearrange the content to allow it to be removed, eliminating the need for cascading $refs.
+    severity: error
+    resolved: false
+    given: "$.components..*"
+    then:
+      function: noChainedRefsInComponents
