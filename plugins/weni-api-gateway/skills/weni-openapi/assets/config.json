@@ -1,0 +1,46 @@
+{
+  "openapi_version": "3.0.0",
+  "servers": [
+    {
+      "url": "https://cx.vtex.com/api/v1",
+      "description": "Weni CX API gateway."
+    }
+  ],
+  "inventory": {
+    "script": "scripts/inventory.sh",
+    "underlying_command": "python manage.py api_gateway_inventory --out .openapi/inventory.json",
+    "path": ".openapi/inventory.json",
+    "supported_versions": [1]
+  },
+  "output": {
+    "directory": "docs/openapi",
+    "filename_template": "{alias}.openapi.json",
+    "one_file_per_endpoint": true,
+    "comment": "The slug is always the gateway alias, never the service name. There is no whole-service schema: documenting three aliases means writing three files.",
+    "publish_repository": "openapi-schemas",
+    "publish_filename_template": "VTEX - {title}.json"
+  },
+  "spectral": {
+    "ruleset": "assets/spectral/spectral.yml",
+    "cli_package": "@stoplight/spectral-cli",
+    "custom_functions": ["definedNotExample", "noChainedRefsInComponents"]
+  },
+  "canonical_examples": {
+    "comment": "Fixed values so regenerating the schema produces no example churn. Reuse these instead of inventing new ones.",
+    "uuid": "d2f9a3c1-6b47-4e58-9a2d-7c1e5b8f0a34",
+    "project_uuid": "8c5a1f42-3e9b-4d7a-b6c8-2f0e91d4a5b7",
+    "contact_uuid": "5a7e2c94-1b8d-4f36-a9e7-3d0c6b2f8e15",
+    "datetime": "2024-05-14T18:32:07.512000Z",
+    "date": "2024-05-14",
+    "email": "ana.silva@example.com",
+    "name": "Ana Silva",
+    "phone": "+5511999998888",
+    "urn": "whatsapp:5511999998888",
+    "integer": 42,
+    "number": 19.9,
+    "boolean": true,
+    "string": "example",
+    "language": "por",
+    "cursor": "cD0yMDI0LTA1LTE0KzE4JTNBMzIlM0EwNw=="
+  }
+}

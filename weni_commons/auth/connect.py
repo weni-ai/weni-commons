@@ -3,7 +3,10 @@ from typing import Optional
 
 import requests
 from django.conf import settings
+<<<<<<< HEAD
 from rest_framework.permissions import BasePermission
+=======
+>>>>>>> feat/weni-openapi-plugin
 
 from weni_commons.auth.constants import CONNECT_AUTHORIZATION_TIMEOUT_SECONDS
 
@@ -84,6 +87,7 @@ class ConnectAuthorizationClient:
             return int(role)
         except (TypeError, ValueError):
             return None
+<<<<<<< HEAD
 
 
 class ConnectProjectAuthorization(BasePermission):
@@ -134,3 +138,5 @@ class ConnectProjectAuthorization(BasePermission):
             header = header.decode("iso-8859-1")
         header = header.strip()
         return header or None
+=======
+>>>>>>> feat/weni-openapi-plugin

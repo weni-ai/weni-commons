@@ -39,17 +39,28 @@ on by default and guarded — see prune_routes().
 """
 import logging
 import os
+<<<<<<< HEAD
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests as http
 
+=======
+from typing import Dict, List, Optional, Tuple
+
+import requests as http
+
+from weni_commons.kong.discovery import iter_exposed_views, kong_route_name
+>>>>>>> feat/weni-openapi-plugin
 from weni_commons.kong.paths import (
     has_path_params,
     join_prefix,
     kong_regex_path,
     normalize_path,
+<<<<<<< HEAD
     path_template_from_regex,
     path_template_from_route,
+=======
+>>>>>>> feat/weni-openapi-plugin
     rewrite_mode_for,
 )
 
@@ -68,6 +79,7 @@ class PruneLimitExceeded(Exception):
     """Prune would delete more routes than the safety threshold allows."""
 
 
+<<<<<<< HEAD
 def _resolve_view_target(callback: Any) -> Optional[Any]:
     """Return APIView.view_class or ViewSet.cls from a URL callback."""
     return getattr(callback, "view_class", None) or getattr(callback, "cls", None)
@@ -214,6 +226,8 @@ def _django_path_template(
     return normalize_path(template)
 
 
+=======
+>>>>>>> feat/weni-openapi-plugin
 def _gateway_paths(
     url_prefix: str,
     upstream_template: str,
@@ -249,6 +263,7 @@ def _gateway_paths(
         ]
 
     return [full_gateway]
+<<<<<<< HEAD
 
 
 def _route_name(upstream_template: str, alias: Optional[str]) -> str:
@@ -262,6 +277,8 @@ def _route_name(upstream_template: str, alias: Optional[str]) -> str:
         .replace("}", "")
     )
     return "allow-" + slug
+=======
+>>>>>>> feat/weni-openapi-plugin
 
 
 def discover_routes(suffix: str = ".json") -> List[Dict]:
@@ -280,6 +297,7 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
     """
     url_prefix = os.environ["KONG_URL_PREFIX"].rstrip("/")
 
+<<<<<<< HEAD
     from django.urls import URLPattern, URLResolver, get_resolver
 
     # Keyed by Kong route name so duplicate aliases overwrite (last-writer-wins).
@@ -362,6 +380,58 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
                 )
 
     walk(get_resolver())
+=======
+    # Keyed by Kong route name so duplicate aliases overwrite (last-writer-wins).
+    routes_by_name: Dict[str, Dict] = {}
+
+    for record in iter_exposed_views(suffix):
+        upstream_template = record["upstream_path"]
+        alias = record["alias"]
+
+        rewrite_mode, alias_for_paths = rewrite_mode_for(upstream_template, alias)
+        if alias and alias_for_paths is None and has_path_params(upstream_template):
+            logger.warning(
+                "discover_routes: alias %r has no path params but upstream "
+                "%s requires them — registering prefix path only",
+                alias,
+                upstream_template,
+            )
+
+        paths = _gateway_paths(
+            url_prefix,
+            upstream_template,
+            alias_for_paths,
+            rewrite_mode,
+        )
+        route_name = kong_route_name(upstream_template, alias_for_paths)
+
+        if route_name in routes_by_name:
+            previous = routes_by_name[route_name]
+            logger.warning(
+                "discover_routes: duplicate route name %r — "
+                "overwriting previous registration (was upstream %s)",
+                route_name,
+                previous.get("upstream_uri"),
+            )
+
+        routes_by_name[route_name] = {
+            "name": route_name,
+            "paths": paths,
+            "methods": record["methods"],
+            "service": record["service"],
+            "strip_path": False,
+            "upstream_uri": upstream_template,
+            "rewrite_mode": rewrite_mode,
+        }
+        logger.debug(
+            "discover_routes: found %s -> %s (upstream %s, mode %s, service %s)",
+            route_name,
+            paths,
+            upstream_template,
+            rewrite_mode,
+            record["service"],
+        )
+>>>>>>> feat/weni-openapi-plugin
 
     routes = list(routes_by_name.values())
     logger.info("discover_routes: %d route(s) discovered", len(routes))

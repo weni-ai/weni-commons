@@ -1,0 +1,138 @@
+{
+  "comment": "Constants shared by every endpoint behind the Weni API Gateway. Copy the `security` array and merge `components` into the generated document verbatim — they are already Spectral-clean, so hand-editing them is how drift starts.",
+  "security": [
+    {
+      "sessionToken": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "sessionToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Session token issued by Weni Connect, sent as `Authorization: Bearer {token}`. The token identifies both the user and the project, so no project ID is passed in the path or query string."
+      }
+    },
+    "parameters": {
+      "Content-Type": {
+        "name": "Content-Type",
+        "in": "header",
+        "description": "Type of the content being sent.",
+        "required": true,
+        "style": "simple",
+        "schema": {
+          "type": "string",
+          "example": "application/json"
+        }
+      },
+      "Accept": {
+        "name": "Accept",
+        "in": "header",
+        "description": "HTTP Client Negotiation Accept Header. Indicates the types of responses the client can understand.",
+        "required": true,
+        "style": "simple",
+        "schema": {
+          "type": "string",
+          "example": "application/json"
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Unauthorized",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "detail": {
+                  "type": "string",
+                  "description": "Reason the request was not authenticated."
+                }
+              }
+            },
+            "example": {
+              "detail": "Authentication credentials were not provided."
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Forbidden",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "detail": {
+                  "type": "string",
+                  "description": "Reason access to the project was denied."
+                }
+              }
+            },
+            "example": {
+              "detail": "You do not have permission to perform this action."
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Not Found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "detail": {
+                  "type": "string",
+                  "description": "Reason the resource could not be found."
+                }
+              }
+            },
+            "example": {
+              "detail": "Not found."
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "Too Many Requests",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "detail": {
+                  "type": "string",
+                  "description": "Throttling message, including how long to wait before retrying."
+                }
+              }
+            },
+            "example": {
+              "detail": "Request was throttled. Expected available in 60 seconds."
+            }
+          }
+        }
+      },
+      "InternalServerError": {
+        "description": "Internal Server Error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "detail": {
+                  "type": "string",
+                  "description": "Generic error message. Retry the request and contact support if it persists."
+                }
+              }
+            },
+            "example": {
+              "detail": "Internal server error."
+            }
+          }
+        }
+      }
+    }
+  }
+}
