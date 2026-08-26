@@ -21,6 +21,7 @@ Usage:
         # Public (flat):   /events
         # Compat:          /flows/events  and  /flows/api/v2/events.json
         # Upstream:        /api/v2/events.json
+        # Kong service:    derived from KONG_URL_PREFIX (/flows → flows-service)
 
     # ViewSet — expose every router-generated route for this class
     @api_gateway_expose(service="insights-service")
@@ -59,7 +60,7 @@ def api_gateway_expose(
     _view: Any = None,
     *,
     methods: Optional[List[str]] = None,
-    service: str = "flows-service",
+    service: Optional[str] = None,
     alias: Optional[str] = None,
 ) -> Any:
     """
@@ -76,7 +77,10 @@ def api_gateway_expose(
         methods: HTTP methods allowed on this route. Defaults to ["GET"].
             For ViewSet routes, discover_routes prefers methods from
             ``callback.actions`` when present.
-        service: Kong service name this view belongs to.
+        service: Kong service name this view belongs to. Defaults to None,
+            meaning the service of this sync (derived from KONG_URL_PREFIX,
+            e.g. /flows → flows-service). Pass an explicit name only when
+            the view must attach to a different Kong service.
         alias: Optional short public path (global). May include ``{pk}``
             (or other path converters) for detail actions. When set without
             path params, Kong exposes:
