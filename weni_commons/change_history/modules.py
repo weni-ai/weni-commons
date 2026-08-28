@@ -2,8 +2,9 @@ from enum import Enum
 
 
 class Module(str, Enum):
-    NEXUS = "NEXUS"
+    FLOWS = "FLOWS"
     LIVE_DESK = "LIVE_DESK"
+    NEXUS = "NEXUS"
 
     KNOWLEDGE_BASE = "KNOWLEDGE_BASE"
     INSTRUCTIONS = "INSTRUCTIONS"
