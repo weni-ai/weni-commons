@@ -9,16 +9,23 @@
   "inventory": {
     "script": "scripts/inventory.sh",
     "underlying_command": "python manage.py api_gateway_inventory --out .openapi/inventory.json",
-    "path": ".openapi/inventory.json",
+    "out_template": ".openapi/{repo}.inventory.json",
+    "comment": "The inventory is written into the connect workspace, not into the service repository, so documenting flows leaves no artifact in flows.",
     "supported_versions": [1]
   },
   "output": {
-    "directory": "docs/openapi",
-    "filename_template": "{alias}.openapi.json",
-    "one_file_per_endpoint": true,
-    "comment": "The slug is always the gateway alias, never the service name. There is no whole-service schema: documenting three aliases means writing three files.",
+    "workspace": "weni-engine",
+    "path": "docs/openapi/VTEX - CX API.json",
+    "manifest": "docs/openapi/.weni-openapi.manifest.json",
+    "title": "VTEX CX API",
+    "portal_slug": "cx-api",
+    "comment": "Single source of truth: every gateway endpoint of every repository lives in this one document, in the connect workspace, and it is what gets published to openapi-schemas.",
     "publish_repository": "openapi-schemas",
-    "publish_filename_template": "VTEX - {title}.json"
+    "publish_filename": "VTEX - CX API.json"
+  },
+  "merge": {
+    "script": "scripts/merge.py",
+    "comment": "The agent writes a one-path fragment and this script merges it. Editing the consolidated document directly risks the endpoints it does not own."
   },
   "spectral": {
     "ruleset": "assets/spectral/spectral.yml",
@@ -36,6 +43,8 @@
     "name": "Ana Silva",
     "phone": "+5511999998888",
     "urn": "whatsapp:5511999998888",
+    "meta_flow_id": "1234567890123456",
+    "flow_name": "Welcome survey",
     "integer": 42,
     "number": 19.9,
     "boolean": true,

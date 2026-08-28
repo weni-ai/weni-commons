@@ -87,10 +87,15 @@ Os outros são `no_serializer`, `serializer_declared_only`, `unresolved_fields` 
 
 ## O plugin `weni-api-gateway`
 
-A geração roda no repositório que é dono dos endpoints, não no `weni-commons`.
-Por isso ela é distribuída como plugin do Cursor: instala-se uma vez e a skill
-fica disponível em qualquer workspace, sem que cada serviço precise versionar uma
-cópia do procedimento.
+A geração não roda no repositório que é dono do endpoint. Ela roda no
+**connect**, porque é lá que vive o documento publicado: um único
+`docs/openapi/VTEX - CX API.json` com todos os endpoints de gateway de todos os
+repositórios. O `openapi-schemas` é organizado assim — cada `VTEX - *.json` é uma
+API de produto com muitos endpoints, em geral vindos de vários repositórios de
+código — e um documento único também é a única forma de ter uma fonte da verdade.
+
+Ela é distribuída como plugin do Cursor para que a skill fique disponível sem que
+cada serviço precise versionar uma cópia do procedimento.
 
 O plugin vive neste repositório, em `plugins/weni-api-gateway/`, porque sua
 correção está amarrada ao formato do inventário — os dois são versionados juntos.
@@ -108,24 +113,53 @@ Plugins → Add Marketplace → Import from Repo) com o plugin em modo **Require
 que instala para todos sem ninguém fazer nada, e com **Auto Refresh** ligado para
 que as correções se propaguem.
 
-Com o plugin instalado, abra o repositório do serviço e rode no chat do Cursor:
+Com o plugin instalado, abra o workspace do **connect** e rode no chat do Cursor,
+dizendo qual repositório é dono do endpoint e qual alias ele tem no gateway:
 
 ```text
-/weni-openapi
+/weni-openapi flows whatsapp_flows
 ```
 
-O repositório é o workspace atual — o que tem o `manage.py`. Não se passa o nome
-dele como argumento.
-
-Para documentar um endpoint só, passe o alias que ele tem no gateway:
-
-```text
-/weni-openapi channels
-```
+O primeiro argumento é o repositório em que a skill vai subir o Django; o nome
+puro basta, porque o checkout é procurado ao lado do workspace. Sem o segundo,
+todos os endpoints expostos daquele repositório são documentados.
 
 O inventário continua cobrindo **todos** os endpoints expostos pelo decorator —
 ele é barato e mostra ao desenvolvedor o que mais existe. O que o alias estreita
-é apenas o schema gerado, que sai em `docs/openapi/channels.openapi.json`.
+é apenas o que vira documentação. O inventário em si é gravado no `.openapi/` do
+connect, que está no gitignore, de modo que documentar o `flows` não deixa nada
+para trás no `flows`.
+
+### Mesclar em vez de escrever
+
+O agente nunca escreve o documento consolidado. Ele escreve um fragmento com o
+único path que lhe foi pedido, e o `scripts/merge.py` mescla esse fragmento:
+
+```bash
+scripts/merge.py --fragment .openapi/whatsapp_flows.fragment.json \
+                 --alias whatsapp_flows --repo flows
+```
+
+O script insere ou substitui exatamente um path, junta a tag, aplica o bloco
+compartilhado de `security` e `components`, reconstrói a seção `## Index` do
+overview a partir do `paths` e registra em
+`docs/openapi/.weni-openapi.manifest.json` de qual repositório veio o alias — a
+procedência fica num arquivo ao lado, fora do que a VTEX publica.
+
+Todo o resto do documento mantém seus bytes. É essa propriedade que torna a
+coisa segura com quarenta endpoints: a prosa que alguém editou à mão no mês
+passado não corre risco por causa de uma execução voltada a outro alias, e
+rodar de novo com o mesmo fragmento não gera diff nenhum.
+
+Conflito é recusa, nunca sobrescrita. Dois aliases reivindicando o mesmo path,
+ou um componente compartilhado editado no lugar, terminam com erro e pedem
+decisão de uma pessoa.
+
+Os outros subcomandos: `--extract <alias>` imprime o que o documento já diz
+sobre um alias, que é como uma regeração preserva a prosa; `--list` mostra cada
+alias documentado com seu repositório; `--remove` tira um que perdeu o
+decorator; `--reindex` reconstrói só o índice, depois que summaries ou o slug do
+Portal mudam.
 
 ### Revalidar um arquivo editado à mão
 
@@ -134,7 +168,7 @@ descrição, acrescentar um campo, trocar um exemplo. Para confirmar que ele
 continua publicável, sem regerar nada:
 
 ```text
-/weni-openapi validate docs/openapi/channels.openapi.json
+/weni-openapi validate
 ```
 
 Esse modo só faz duas coisas: roda o Spectral e corrige o que ele reprovar, com
@@ -144,25 +178,22 @@ a única forma de calar uma regra fosse apagar conteúdo seu, a skill para e
 pergunta. E se algo no arquivo parecer divergir do código, ela relata como
 observação em vez de mexer.
 
-A saída é sempre **um arquivo por endpoint**, nomeado pelo alias. Não existe
-schema do serviço inteiro: rodar sem alias gera um arquivo por endpoint exposto,
-não um arquivo grande. O motivo é isolamento — regerar um endpoint nunca toca nos
-outros, e a prosa que alguém editou à mão num arquivo não corre risco por causa
-de uma execução voltada para outro alias. Se um dia a decisão for publicar um
-schema único, juntar arquivos é mecânico; separar um arquivo já editado, não.
+Sem argumento de arquivo, ele valida o documento consolidado, que é o caso que
+importa. Passe um caminho apenas para validar outro arquivo.
 
 Se nenhuma rota tiver aquele alias, a skill para e lista os aliases que existem,
 em vez de documentar a rota de nome parecido.
 
 E é só isso. A skill roda o inventário sozinha, através do
-`scripts/inventory.sh` no diretório atual, que resolve o que o comando precisa
-para subir o Django: escolhe o Python do virtualenv, aponta as bibliotecas GDAL
-e GEOS que projetos PostGIS exigem no macOS e, se o `weni-commons` instalado for
-anterior ao comando, cai para um checkout local via `PYTHONPATH`.
+`scripts/inventory.sh --repo <repositorio>`, que resolve o que o comando precisa
+para subir o Django: acha o checkout, escolhe o Python do virtualenv, aponta as
+bibliotecas GDAL e GEOS que projetos PostGIS exigem no macOS e, se o
+`weni-commons` instalado for anterior ao comando, cai para um checkout local via
+`PYTHONPATH`.
 
-Em seguida ela lê o código de cada rota, monta o documento a partir dos
-templates, escreve a prosa e valida. O desenvolvedor não roda dois comandos —
-roda a skill.
+Em seguida ela lê o código de cada rota, monta o fragmento a partir dos
+templates, escreve a prosa, mescla e valida. O desenvolvedor não roda dois
+comandos — roda a skill.
 
 Os scripts rodam em macOS e Linux. No Windows, use WSL: a detecção de virtualenv
 procura `bin/python`, não `Scripts/`.
@@ -177,7 +208,7 @@ Node 18+ no PATH, o `validate.sh` baixa um Node LTS para
 execuções seguintes, os dois já estão no disco.
 
 ```bash
-scripts/validate.sh docs/openapi/channels.openapi.json
+scripts/validate.sh "docs/openapi/VTEX - CX API.json"
 ```
 
 O ciclo é: ler as violações, corrigir o conteúdo, rodar de novo, até zerar. A
@@ -191,10 +222,11 @@ por um servidor MCP. Rodar o linter real é mais confiável, e sai de graça.
 
 ## Resultado do piloto
 
-O piloto rodou sobre as duas rotas que o flows expõe hoje, `/contacts` e
-`/channels`. O documento gerado passou no Spectral **sem nenhum achado em
-nenhuma severidade na primeira execução** — para comparação, schemas já
-publicados pela VTEX acusam erros nessa mesma ruleset.
+O piloto rodou sobre as rotas que o flows expõe hoje: `/contacts`, `/channels` e
+`/events`, as três agora dentro do `VTEX - CX API.json`. Os documentos gerados
+passaram no Spectral **sem nenhum achado em nenhuma severidade na primeira
+execução** — para comparação, schemas já publicados pela VTEX acusam erros nessa
+mesma ruleset.
 
 O trabalho manual se concentrou onde a divisão de camadas previa: ler o corpo
 dos sete `SerializerMethodField` do `ContactReadSerializer`, cuja forma não é
@@ -205,20 +237,29 @@ O piloto também encontrou um bug: um `DictField` era descrito como array,
 porque no DRF ele também tem um atributo `child`. Foi corrigido e coberto por
 teste.
 
+## Publicação
+
+O documento é versionado no connect e revisado como código. Publicar é um passo
+humano separado: copiar `docs/openapi/VTEX - CX API.json` para um checkout do
+[openapi-schemas](https://github.com/vtex/openapi-schemas) com o mesmo nome,
+conferir se a entrada dele existe no `config.json` daquele repositório e abrir um
+pull request lá. O manifesto fica para trás — ele é nosso, não da VTEX.
+
 ## O que continua sendo decisão humana
 
-A automação não decide três coisas, e elas seguem em aberto:
+A automação não decide duas coisas, e elas seguem em aberto:
 
 1. **Se a base pública inclui `/api/v1`.** O server configurado é
    `https://cx.vtex.com/api/v1`, e o Kong registra paths planos como
    `/contacts`. Isso só fecha se a borda mapear `/api/v1/contacts` para o
    `/contacts` do Kong. Precisa de confirmação da infra.
-2. **O título e o nome do arquivo publicado.** O Portal deriva o slug da URL a
-   partir deles, então a definição é de quem escreve a documentação.
-3. **Como o Portal agrupa os endpoints.** Se cada endpoint vira uma referência
-   própria ou se vários são publicados juntos. Isso não muda o que a skill gera:
-   sempre um arquivo por endpoint. Juntar arquivos depois é mecânico; separar um
-   arquivo já editado à mão, não.
+2. **O slug do Portal.** O nome do arquivo está definido — `VTEX - CX API.json` —
+   mas o slug que o Portal deriva dele é decisão de quem escreve a documentação,
+   e todos os links do índice dependem disso. A skill assume `cx-api`; se mudar,
+   um `merge.py --reindex` reescreve todos os links.
+
+Uma terceira questão está resolvida: o Portal publica **uma referência por API**,
+então todo endpoint de gateway de todo repositório vai para o mesmo documento.
 
 ## Próximos passos
 

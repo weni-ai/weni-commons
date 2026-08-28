@@ -92,10 +92,16 @@ and `duplicate_route_name`. What to do about each is in the skill's
 
 ## The `weni-api-gateway` plugin
 
-Generation runs in the repository that owns the endpoints, not in
-`weni-commons`. That is why it is distributed as a Cursor plugin: install it once
-and the skill is available in every workspace, without each service having to
-vendor a copy of the playbook.
+Generation does not run in the repository that owns the endpoint. It runs in
+**connect**, because that is where the published document lives: a single
+`docs/openapi/VTEX - CX API.json` holding every gateway endpoint of every
+repository. `openapi-schemas` is organised that way — each `VTEX - *.json` is a
+product-level API with many endpoints, often coming from several code
+repositories — and one document is also the only way to have one source of
+truth.
+
+It is distributed as a Cursor plugin so the skill is available without each
+service vendoring a copy of the playbook.
 
 The plugin lives in this repository, under `plugins/weni-api-gateway/`, because
 its correctness is tied to the inventory format — the two are versioned
@@ -114,25 +120,53 @@ team, use an **organization marketplace** (Dashboard → Plugins → Add Marketp
 every member with no action on their part, and **Auto Refresh** on so fixes
 propagate.
 
-With the plugin installed, open the service repository and run it in the Cursor
-chat:
+With the plugin installed, open the **connect** workspace and run it in the
+Cursor chat, naming the repository that owns the endpoint and the alias it
+carries on the gateway:
 
 ```text
-/weni-openapi
+/weni-openapi flows whatsapp_flows
 ```
 
-The repository is the current workspace — the one with `manage.py`. Its name is
-not an argument.
+The first argument is the repository the skill boots Django in; a bare name is
+enough, since the checkout is found next to the workspace. Drop the second and
+every exposed endpoint of that repository is documented.
 
-To document a single endpoint, pass the alias it carries on the gateway:
+The inventory always covers **every** endpoint the decorator exposes — it is
+cheap, and it shows the developer what else is there. The alias narrows only what
+gets documented. The inventory itself is written into connect's `.openapi/`
+directory, which is gitignored, so documenting `flows` leaves nothing behind in
+`flows`.
 
-```text
-/weni-openapi channels
+### Merging instead of writing
+
+The agent never writes the consolidated document. It writes a fragment carrying
+the single path it was asked about, and `scripts/merge.py` merges that fragment:
+
+```bash
+scripts/merge.py --fragment .openapi/whatsapp_flows.fragment.json \
+                 --alias whatsapp_flows --repo flows
 ```
 
-The inventory still covers **every** endpoint the decorator exposes — it is
-cheap, and it shows the developer what else is there. The alias narrows only the
-generated schema, which lands in `docs/openapi/channels.openapi.json`.
+The script inserts or replaces exactly one path, unions the tag, applies the
+shared `security` and `components` block, rebuilds the `## Index` section of the
+overview from `paths`, and records in
+`docs/openapi/.weni-openapi.manifest.json` which repository the alias came from —
+provenance stays in a sidecar, out of what VTEX publishes.
+
+Everything else in the document keeps its bytes. That is the property that makes
+this safe at forty endpoints: prose someone edited by hand last month cannot be
+damaged by a run scoped to a different alias, and re-running with an unchanged
+fragment produces no diff at all.
+
+Conflicts are refusals, never overwrites. Two aliases claiming one path, or a
+shared component edited in place, exit non-zero and ask a person to settle it.
+
+The other subcommands: `--extract <alias>` prints what the document already says
+about an alias, which is how a regeneration preserves prose; `--list` shows every
+documented alias with its repository; `--remove` drops one that lost its
+decorator; `--reindex` rebuilds the index alone, after summaries or the Portal
+slug change.
 
 ### Re-validating a hand-edited file
 
@@ -141,7 +175,7 @@ field, change an example. To confirm it is still publishable, without
 regenerating anything:
 
 ```text
-/weni-openapi validate docs/openapi/channels.openapi.json
+/weni-openapi validate
 ```
 
 That mode does two things only: run Spectral, and repair whatever it rejects
@@ -152,27 +186,22 @@ content, the skill stops and asks. And if something in the file looks
 inconsistent with the code, it reports that as an observation instead of
 touching it.
 
-Output is always **one file per endpoint**, named after the alias. There is no
-whole-service schema: running without an alias produces one file per exposed
-endpoint, not one big one. The reason is isolation — regenerating one endpoint
-never touches the others, and prose someone edited by hand in one file is never
-at risk from a run scoped to a different alias. If the decision later is to
-publish a single schema, merging files is mechanical while splitting a
-hand-edited one is not.
+Without a file argument it lints the consolidated document, which is the case
+that matters. Pass a path only for some other file.
 
-If no route carries that alias, the skill stops and lists the aliases that exist
-rather than documenting the one whose name looked close.
+If no route carries the alias you asked for, the skill stops and lists the
+aliases that exist rather than documenting the one whose name looked close.
 
 That is the whole interface. The skill builds the inventory itself, through
-`scripts/inventory.sh` in the current directory, which resolves whatever the
-command needs to boot Django: it picks the virtualenv interpreter, points at the
-GDAL and GEOS libraries PostGIS projects require on macOS, and falls back to a
-local checkout via `PYTHONPATH` when the installed `weni-commons` predates the
-command.
+`scripts/inventory.sh --repo <repository>`, which resolves whatever the command
+needs to boot Django: it finds the checkout, picks the virtualenv interpreter,
+points at the GDAL and GEOS libraries PostGIS projects require on macOS, and
+falls back to a local checkout via `PYTHONPATH` when the installed
+`weni-commons` predates the command.
 
-It then reads the code behind each route, assembles the document from the
-templates, writes the prose and validates it. The developer does not run two
-commands — they run the skill.
+It then reads the code behind each route, assembles the fragment from the
+templates, writes the prose, merges and validates. The developer does not run
+two commands — they run the skill.
 
 The scripts run on macOS and Linux. On Windows, use WSL: virtualenv detection
 looks for `bin/python`, not `Scripts/`.
@@ -186,7 +215,7 @@ Node 18+, `validate.sh` downloads a Node LTS into `~/.cache/weni-openapi` — no
 `assets/spectral/node_modules` (gitignored). Later runs reuse both.
 
 ```bash
-scripts/validate.sh docs/openapi/channels.openapi.json
+scripts/validate.sh "docs/openapi/VTEX - CX API.json"
 ```
 
 The loop is: read the violations, fix the content, run again, until it is
@@ -201,10 +230,10 @@ nothing.
 
 ## Pilot result
 
-The pilot ran over the two routes flows exposes today, `/contacts` and
-`/channels`. The generated document passed Spectral **with no findings at any
-severity on the first run** — for comparison, schemas already published by VTEX
-report errors under that same ruleset.
+The pilot ran over the routes flows exposes today: `/contacts`, `/channels` and
+`/events`, all three now in `VTEX - CX API.json`. The generated documents passed
+Spectral **with no findings at any severity on the first run** — for comparison,
+schemas already published by VTEX report errors under that same ruleset.
 
 The manual work landed exactly where the layer split predicted: reading the
 bodies of the seven `SerializerMethodField` in `ContactReadSerializer`, whose
@@ -214,20 +243,29 @@ shape is not introspectable, and finding two query parameters (`order_by` and
 The pilot also found a bug: a `DictField` was described as an array, because in
 DRF it also has a `child` attribute. It was fixed and covered by a test.
 
+## Publishing
+
+The document is versioned in connect and reviewed like code. Publishing is a
+separate, human step: copy `docs/openapi/VTEX - CX API.json` into an
+[openapi-schemas](https://github.com/vtex/openapi-schemas) checkout under the
+same name, confirm its entry exists in that repository's `config.json`, and open
+a pull request there. The manifest stays behind — it is ours, not VTEX's.
+
 ## What stays a human decision
 
-The automation does not decide three things, and they remain open:
+The automation does not decide two things, and they remain open:
 
 1. **Whether the public base includes `/api/v1`.** The configured server is
    `https://cx.vtex.com/api/v1`, while Kong registers flat paths such as
    `/contacts`. That is only consistent if the edge maps `/api/v1/contacts` to
    Kong's `/contacts`. It needs confirmation from infrastructure.
-2. **The published title and file name.** The Portal derives its URL slug from
-   them, so it is a technical writer's call.
-3. **How the Portal groups the endpoints.** Whether each endpoint becomes its own
-   reference or several are published together. It does not change what the skill
-   generates: always one file per endpoint. Merging files later is mechanical,
-   while splitting a hand-edited one is not.
+2. **The Portal slug.** The file name is settled — `VTEX - CX API.json` — but the
+   slug the Portal derives from it is a technical writer's call, and every link
+   in the index depends on it. The skill assumes `cx-api`; if it changes, one
+   `merge.py --reindex` rewrites every link.
+
+A third question is now settled: the Portal publishes **one reference per API**,
+so every gateway endpoint of every repository goes into the same document.
 
 ## Next steps
 

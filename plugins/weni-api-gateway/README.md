@@ -3,32 +3,52 @@
 Generates the OpenAPI 3.0 schema that the VTEX Developer Portal publishes, for
 Django REST endpoints exposed through the Weni API Gateway.
 
-The plugin ships one skill, `weni-openapi`. Run it from the service repository
-(the one with `manage.py`); the optional argument is the gateway alias:
+The plugin ships one skill, `weni-openapi`. Run it from the **connect**
+workspace, naming the repository that owns the endpoint and, optionally, the
+gateway alias:
 
 ```text
-/weni-openapi
+/weni-openapi flows whatsapp_flows
 ```
 
 ```text
-/weni-openapi channels
+/weni-openapi flows
 ```
 
-The inventory always covers every exposed endpoint. The alias, when given,
-narrows only the generated schema.
+The first argument is the repository the inventory is built in — a bare name is
+enough, the checkout is found next to the workspace. The inventory always covers
+every exposed endpoint of that repository; the alias narrows only what gets
+documented.
 
-After editing a generated file by hand, re-check it without regenerating:
+After editing the document by hand, re-check it without regenerating:
 
 ```text
-/weni-openapi validate docs/openapi/channels.openapi.json
+/weni-openapi validate
 ```
 
 That mode only lints and repairs what Spectral rejects. It never rebuilds the
 document, and it never overwrites content you added or reworded.
 
-Output is always **one file per endpoint**, named after the alias
-(`docs/openapi/channels.openapi.json`). There is no whole-service schema: run it
-without an alias and you get one file per exposed endpoint, not one big one.
+## One document
+
+Output is always the same file: `docs/openapi/VTEX - CX API.json` in connect,
+holding every gateway endpoint of every repository, one key under `paths` per
+alias. It is the file that gets published to `openapi-schemas`, which is
+organised the same way — one product-level API per JSON, many endpoints inside.
+
+The agent never writes that file. It writes a one-path fragment, and
+`scripts/merge.py` merges it: one path inserted or replaced, the tag unioned, the
+shared components applied, the `## Index` section of the overview rebuilt from
+`paths`, and the owning repository recorded in
+`docs/openapi/.weni-openapi.manifest.json`. Every other endpoint keeps its bytes,
+so a run scoped to one alias cannot damage prose someone wrote for another.
+
+```bash
+scripts/merge.py --list                  what is documented, and from where
+scripts/merge.py --extract <alias>       what the document says today
+scripts/merge.py --remove <alias>        drop one that lost its decorator
+scripts/merge.py --reindex               rebuild the index alone
+```
 
 ## Install
 
@@ -65,24 +85,27 @@ enable **Auto Refresh** so pushes to the tracked branch propagate. Access can be
 scoped with Organization Groups. Teams plans get one marketplace, Enterprise
 unlimited; on Enterprise only admins can add one.
 
-### For a single service repository
+### Committed into connect
 
-Committing the skill needs no distribution mechanism at all — anyone who clones
-the service gets it:
+Since the skill only ever runs in one workspace, committing it there needs no
+distribution mechanism at all — anyone who clones connect gets it:
 
 ```bash
-cp -R plugins/weni-api-gateway/skills/weni-openapi <service>/.cursor/skills/weni-openapi
+cp -R plugins/weni-api-gateway/skills/weni-openapi <connect>/.cursor/skills/weni-openapi
 ```
 
-The cost is duplication: the skill then lives in several repositories and will
+The cost is duplication: the skill then lives in two repositories and will
 drift. Reasonable as a bridge until the marketplace exists.
 
 ## Requirements
 
-- The target repository needs `weni_commons` in `INSTALLED_APPS` and
+- The workspace is connect, which owns `docs/openapi/VTEX - CX API.json`. The
+  service repository you name is expected next to it, or passed as a path.
+- The service repository needs `weni_commons` in `INSTALLED_APPS` and
   `KONG_URL_PREFIX` configured, at a version that ships the
   `api_gateway_inventory` command. Older releases still work if you keep a local
   `weni-commons` checkout — `scripts/inventory.sh` falls back to it.
+- `merge.py` needs Python 3.9+ and nothing else: standard library only.
 - Spectral validation uses the ruleset bundled in the skill
   (`assets/spectral/spectral.yml`). The first run installs Node LTS into
   `~/.cache/weni-openapi` if PATH has no Node 18+, then `npm ci` into
@@ -102,5 +125,6 @@ plugins/weni-api-gateway/
     ├── assets/
     │   └── spectral/          VTEX ruleset snapshot + pinned Spectral CLI
     ├── scripts/inventory.sh   builds the route inventory in a service repo
+    ├── scripts/merge.py       merges one endpoint into the consolidated document
     └── scripts/validate.sh    Spectral lint against the bundled ruleset
 ```

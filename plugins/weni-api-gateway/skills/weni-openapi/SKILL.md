@@ -1,56 +1,55 @@
----
-name: weni-openapi
-description: Generates and updates VTEX Developer Portal OpenAPI 3.0 schemas for Django REST endpoints exposed through the Weni API Gateway, using a deterministic route inventory from weni-commons plus the view and serializer source. Use when documenting gateway endpoints, producing or refreshing a "VTEX - *.json" schema for the openapi-schemas repository, or when the user mentions the Developer Portal, api_gateway_expose or api_gateway_inventory.
-disable-model-invocation: true
----
-
 # Weni OpenAPI generation
 
-Produce the OpenAPI 3.0 schema the VTEX Developer Portal publishes, for the
-endpoints this repository exposes through the Weni API Gateway.
+Maintain the OpenAPI 3.0 document the VTEX Developer Portal publishes for the
+endpoints Weni exposes through the API Gateway. There is one such document, it
+lives in this workspace, and every repository behind the gateway is documented
+in it.
 
 All paths below are relative to this skill's directory (the one holding this
-file). Read `assets/config.json` first — it holds the server URL, output paths
-and the canonical example values.
+file). Read `assets/config.json` first — it holds the server URL, the path of
+the consolidated document and the canonical example values.
 
 ## Invocation
 
 Two modes.
 
 ```text
-/weni-openapi [alias]                       generate
-/weni-openapi validate <file> [<file> ...]   lint an existing file and fix it
+/weni-openapi <repository> [alias]      generate, then merge into the document
+/weni-openapi validate [file]           lint an existing file and fix it
 ```
 
 | Invocation | Mode | Meaning |
 | --- | --- | --- |
-| `/weni-openapi` | generate | Document every documentable route in the current workspace. |
-| `/weni-openapi channels` | generate | Document only the route whose gateway alias is `channels`. |
-| `/weni-openapi validate docs/openapi/channels.openapi.json` | validate | Lint a file the developer edited, fix what the linter rejects, keep their content. |
+| `/weni-openapi flows whatsapp_flows` | generate | Document the `flows` route whose gateway alias is `whatsapp_flows`, and merge it into the consolidated document. |
+| `/weni-openapi flows` | generate | Document every documentable route in `flows`, each merged into the same document. |
+| `/weni-openapi .` | generate | The service repository is the current workspace, for when connect exposes its own routes. |
+| `/weni-openapi validate` | validate | Lint the consolidated document and fix what the linter rejects. |
+| `/weni-openapi validate docs/openapi/other.json` | validate | Lint that file instead. |
 
-`validate` as the first token always means the validate mode, never an alias.
-With no file after it, ask which file — do not guess, and do not fall back to
-generating. Follow [Validate mode](#validate-mode) and ignore the generation
-workflow entirely.
+The first token is always the repository, never an alias. `/weni-openapi
+channels` is not a valid invocation: say which repository is missing and ask.
+If the token matches an alias in the manifest, name the repository the manifest
+records for it and confirm before running.
 
-In generate mode the skill runs in the service repository — the workspace that
-has `manage.py` and `weni_commons` in `INSTALLED_APPS`. Do not take a repository
-name as an argument, and do not look for a sibling checkout. If `manage.py` is
-missing from the current directory, say so and stop.
+`validate` as the first token always means the validate mode, never a
+repository. With no file after it, use the consolidated document. Follow
+[Validate mode](#validate-mode) and ignore the generation workflow entirely.
 
-**One file per endpoint, always.** Each alias gets its own schema file, named
-after the alias. There is no whole-service schema: documenting three aliases
-means writing three files, each with a single path. This holds whether or not
-the developer passed an alias — the alias changes how many files you write, never
-whether they are split.
+## The document
 
-**The alias narrows the output, never the inventory.** Always build the full
-inventory, then document only what is in scope. An inventory of every exposed
-endpoint is cheap and shows the developer what else exists.
+One file, named in `output.path`: `docs/openapi/VTEX - CX API.json`. It holds
+every gateway endpoint of every repository, one key under `paths` per alias, and
+it is what gets published to VTEX. A single source of truth is the whole point
+of it, so:
 
-A single token is always the alias, never a repository. `/weni-openapi channels`
-documents `channels` in the current workspace. `/weni-openapi` documents every
-documentable route in the current workspace.
+- **Never write a per-endpoint file, and never write inside the service
+  repository.** Documenting a `flows` endpoint changes nothing in `flows`.
+- **Never edit the document directly** — not with an editor, not with a patch.
+  Every change goes through `scripts/merge.py`, which cannot damage the
+  endpoints you were not asked about.
+- Which repository each alias came from is recorded in
+  `docs/openapi/.weni-openapi.manifest.json`, next to the document. Internal
+  provenance stays out of what VTEX publishes.
 
 ## Ground rules
 
@@ -70,24 +69,26 @@ These are what keep generated documentation truthful. Do not negotiate them.
 5. **Docstrings are a hint, never the source.** Most repositories have none.
    When one exists, verify every claim against the code before using it.
 6. **Never weaken content to silence Spectral.** Fix the content.
+7. **The endpoints you were not asked about are untouchable.** Their prose,
+   examples and ordering survive your run unchanged. That is what makes running
+   this skill safe once forty endpoints are in one file.
 
 ## Validate mode
 
-For a file a person has edited by hand. The job is narrow: prove it is still
-publishable, and repair only what the linter rejects. Nothing here generates
-documentation.
+For a file a person has edited by hand — usually the consolidated document. The
+job is narrow: prove it is still publishable, and repair only what the linter
+rejects. Nothing here generates documentation.
 
-Do not build the inventory. Do not regenerate the document. Do not restore
-anything from a previous version of the file. The developer's copy is the
-current truth.
+Do not build the inventory. Do not regenerate anything. Do not restore anything
+from a previous version of the file. The developer's copy is the current truth.
 
-1. **Resolve the file.** It must exist and parse as JSON. Report and stop if it
-   does not. With several files, handle each independently and lint each on its
-   own — a clean sibling says nothing about the file next to it.
+1. **Resolve the file.** With no argument, use `output.path` from
+   `config.json`. It must exist and parse as JSON. Report and stop if it does
+   not. With several files, handle each independently and lint each on its own.
 2. **Lint it.**
 
    ```bash
-   scripts/validate.sh <file>
+   scripts/validate.sh "<file>"
    ```
 
 3. **If there are no findings, change nothing.** Say it is clean and stop. Do
@@ -98,6 +99,10 @@ current truth.
    same rule keeps failing after three attempts, stop and report the rule, the
    location and what you tried.
 5. **Report.** See below.
+
+Validate mode is the one place where editing the consolidated document by hand
+is expected, because the developer asked for exactly that. Even here, touch only
+the nodes Spectral names.
 
 ### What you may and may not touch
 
@@ -122,6 +127,9 @@ Hard limits:
   Their prose outranks anything generated.
 - Ground rule 6 still applies: fix the content, never weaken it to silence a
   rule.
+- Leave the `## Index` section of `info.description` alone. It is derived from
+  `paths` by `scripts/merge.py`; hand-editing it only creates a diff the next
+  merge undoes.
 - If something looks factually wrong against the code — a path, method or field
   that the gateway does not serve — **report it as an observation and leave it
   alone**. Verifying that is generate mode's job, and only if they ask for it.
@@ -143,36 +151,56 @@ Everything below is generate mode.
 Copy this checklist and keep it updated as you go:
 
 ```text
-- [ ] 1. Build the inventory
-- [ ] 2. Settle the scope
-- [ ] 3. Read the code behind each route
-- [ ] 4. Assemble the document
-- [ ] 5. Write the prose
-- [ ] 6. Lint with Spectral until clean
-- [ ] 7. Report the gaps
+- [ ] 1. Check the workspace and resolve the repository
+- [ ] 2. Build the inventory
+- [ ] 3. Settle the scope
+- [ ] 4. Read the code behind each route
+- [ ] 5. Recover what is already documented
+- [ ] 6. Assemble the fragment
+- [ ] 7. Write the prose
+- [ ] 8. Merge into the document
+- [ ] 9. Lint until clean
+- [ ] 10. Report the gaps
 ```
 
-### 1. Build the inventory
+### 1. Check the workspace and resolve the repository
+
+The skill runs where the document lives — the connect workspace. Confirm it
+before anything else: either `docs/openapi/VTEX - CX API.json` exists, or the
+current directory holds `manage.py` and the `connect` package (the document has
+not been created yet). If neither is true, stop and say the skill runs in the
+connect workspace, not in the service repository.
+
+Then take the first argument as the repository. It may be a bare name
+(`flows`), a path, or `.` for the current workspace; step 2 resolves it. Do not
+infer it from the alias, and do not fall back to the current workspace when it
+is missing.
+
+### 2. Build the inventory
 
 Run it yourself — the developer should only have to invoke this skill:
 
 ```bash
-scripts/inventory.sh
+scripts/inventory.sh --repo <repository> --out "$PWD/.openapi/<repo>.inventory.json"
 ```
 
-Run it from the current workspace, with no repository argument. The alias, if
-the developer gave one, is not passed here — the inventory always covers every
-exposed endpoint, and filtering happens in step 2.
+Keep `--out` inside this workspace, as `inventory.out_template` in
+`config.json` says. Documenting `flows` must leave no artifact in `flows`.
 
-The script boots Django in the current workspace and runs
+The alias, if the developer gave one, is not passed here — the inventory always
+covers every exposed endpoint of that repository, and filtering happens in
+step 3.
+
+The script boots Django in the target repository and runs
 `manage.py api_gateway_inventory`, resolving on its own what the command needs:
-the virtualenv interpreter, the GDAL and GEOS paths that PostGIS projects need
-on macOS, and a local `weni-commons` checkout when the installed release
-predates the command. It prints the inventory path on stdout and the route and
-warning summary on stderr.
+the repository (by name, searched next to this workspace), the virtualenv
+interpreter, the GDAL and GEOS paths that PostGIS projects need on macOS, and a
+local `weni-commons` checkout when the installed release predates the command.
+It prints the inventory path on stdout and the route and warning summary on
+stderr.
 
-Useful flags, all optional: `--out`, `--service`, `--url-prefix`,
-`--weni-commons`, `--python`. Do not pass a repository name.
+Other useful flags, all optional: `--service`, `--url-prefix`,
+`--weni-commons`, `--python`.
 
 Do not ask the user to run the command, and never fall back to grepping for
 `@api_gateway_expose` — a hand-rolled list is exactly the guesswork the
@@ -181,15 +209,17 @@ and stop:
 
 | Message | What it means |
 | --- | --- |
-| `no manage.py in ...` | The current workspace is not the service repository. Stop and say so. |
-| `the installed weni-commons has no api_gateway_inventory command` | No local checkout was found either. The repository needs a newer `weni-commons`. |
+| `could not find a repository named ...` | The checkout is not next to this workspace. Ask for its path and pass `--repo /path/to/service`. |
+| `no manage.py in ...` | That directory is not a Django project. Stop and say so. |
+| `the installed weni-commons has no api_gateway_inventory command` | No local checkout was found either. The service repository needs a newer `weni-commons`. |
+| A Python traceback while Django boots, pointing inside `site-packages/weni_commons` | The installed release is broken, not just old — a pre-release built mid-merge, for instance. Retry once with `--weni-commons /path/to/weni-commons`, which shadows it, and say in the report that the installed package needs reinstalling. |
 | `--url-prefix is required` | `KONG_URL_PREFIX` is missing from the service settings. Ask, then pass `--url-prefix`. |
 
 Check `inventory_version` against `inventory.supported_versions` in
 `config.json`. If it is higher, the inventory carries fields this skill does not
 know about: continue, but say so in the final report.
 
-### 2. Settle the scope
+### 3. Settle the scope
 
 Summarize what the inventory found before writing anything: the routes, their
 public paths and methods, and the warnings.
@@ -205,13 +235,23 @@ and ask which one was meant. Never document a neighbouring route because its
 name looked close.
 
 **Without an alias.** Every route that is not flagged `missing_alias` is in
-scope, each producing its own file. List them and confirm before writing, since
-this is the expensive path: three routes means three documents to write and lint.
+scope. List them and confirm before writing, since this is the expensive path:
+three routes means three fragments to write, merge and lint.
 
 Either way, skip every route flagged `missing_alias` — it has no public URL yet.
 List those under gaps.
 
-### 3. Read the code behind each route
+Also run
+
+```bash
+scripts/merge.py --list
+```
+
+so you know which aliases the document already carries, and from which
+repository. An alias in scope that is already there is an update, not an
+addition.
+
+### 4. Read the code behind each route
 
 For each route in scope, read the source the inventory points at:
 
@@ -232,48 +272,60 @@ Resolve `unresolved` fields here. A `SerializerMethodField` needs its method
 read; an unmapped field class needs its definition read. If the shape is still
 unclear, ask instead of inventing one.
 
-### 4. Assemble the document
+### 5. Recover what is already documented
 
-Start from `assets/openapi-template.json` and merge
-`assets/gateway-components.json` verbatim — its `security` array and its
-`components` (security scheme, `Accept` / `Content-Type` parameters, shared
-error responses) are already Spectral-clean.
+```bash
+scripts/merge.py --extract <alias> > .openapi/<alias>.previous.json
+```
 
-Mapping from inventory to document:
+The output is a fragment: the path block as the document has it today, plus its
+tag. Empty `paths` means the alias is new.
+
+When it is not empty, treat this run as a diff, not a rewrite. For every
+operation still present with the same fields, keep the existing `summary`,
+`description` and `example` untouched — a person may have edited them, and that
+work outranks anything generated. Change only what the inventory changed: new or
+removed methods, and fields that were added, removed or retyped. State in the
+report what you preserved and what you rewrote.
+
+### 6. Assemble the fragment
+
+One fragment per alias, written to `.openapi/<alias>.fragment.json` in this
+workspace. It carries exactly two keys:
+
+```json
+{
+  "paths": { "<public_path>": { "<method>": { } } },
+  "tags": [{ "name": "<Alias in sentence case>" }]
+}
+```
+
+Nothing else. No `info`, no `servers`, no `components`: `merge.py` applies
+`assets/gateway-components.json` itself, and the document's overview belongs to
+whoever wrote it. Exactly one key under `paths` — the merge refuses more,
+because one alias is one route.
+
+Use `assets/openapi-template.json` for the shape of an operation, and reference
+the shared components by `$ref` as it does (`#/components/parameters/Accept`,
+`#/components/responses/Forbidden` and so on). They are guaranteed to exist in
+the document after the merge.
+
+Mapping from inventory to fragment:
 
 | Inventory | OpenAPI |
 | --- | --- |
-| `public_path` | key under `paths` |
+| `public_path` | the key under `paths` |
 | `gateway_methods` | operations on that path, lowercased |
 | `path_params` | `parameters` with `in: path`, `required: true` |
 | `pagination.query_params` | `parameters` with `in: query` |
 | `serializers.read.fields` | success response schema |
 | `serializers.write.fields` | request body schema for POST, PUT and PATCH |
-| `alias` in sentence case | operation `tags` |
+| `alias` in sentence case | operation `tags`, and the fragment's `tags` entry |
 
-Write one document per alias in scope, to `output.directory` /
-`output.filename_template` from `config.json`, where the slug is the alias. So
-`/weni-openapi channels` writes `docs/openapi/channels.openapi.json`, and
-`/weni-openapi` with three exposed aliases writes three files. Never combine
-aliases into one document, and never name a file after the service.
+Field-level translation rules and the tag conventions are in
+[reference.md](reference.md).
 
-Each file is self-contained and holds exactly one key under `paths`:
-
-- `info.title` and the `info.description` index cover only that endpoint. Do not
-  advertise paths the file does not document.
-- `tags` declares only that endpoint's tag.
-- `components` is the shared block merged verbatim, identical in every file. The
-  security scheme and error responses are the same everywhere, and the ruleset
-  allows unused components, so do not trim it per file.
-
-The reason for the split: regenerating one endpoint must not touch the others,
-and a person's edits to one file must never be at risk from a run scoped to a
-different alias.
-
-Field-level translation rules, the `info.description` overview, and the tag
-conventions are in [reference.md](reference.md).
-
-### 5. Write the prose
+### 7. Write the prose
 
 This is the part introspection cannot do: summaries, descriptions, the
 `## Permissions` block and realistic examples. Follow
@@ -283,18 +335,37 @@ Spectral rules that punish each mistake.
 Use the values in `canonical_examples` from `config.json` rather than inventing
 new ones, so regenerating produces no example churn.
 
-**Updating an existing schema.** If the output file already exists, treat this
-as a diff, not a rewrite. Load it, and for every operation still present with
-the same fields, keep the existing `summary`, `description` and `example`
-untouched — a person may have edited them, and that work outranks anything
-generated. Change only what the inventory changed: new or removed paths and
-methods, and fields that were added, removed or retyped. State in the report
-what you preserved and what you rewrote.
+Two things you do not write here:
 
-### 6. Lint with Spectral until clean
+- **The `## Index` section of `info.description`.** `merge.py` derives it from
+  `paths` and your operation summaries.
+- **Conventions shared by several endpoints** (pagination, date formats,
+  authentication). Those live once in the document's overview. If your endpoint
+  needs one that is missing, say so in the report and propose the wording; do
+  not append a private copy to your operation description.
+
+### 8. Merge into the document
 
 ```bash
-scripts/validate.sh docs/openapi/<file>.json
+scripts/merge.py --fragment .openapi/<alias>.fragment.json \
+                 --alias <alias> --repo <repository> --inventory-version <n>
+```
+
+That inserts or replaces one path, unions the tag, applies the shared
+components, rewrites the index and updates the manifest. Everything else in the
+document keeps its bytes. Add `--dry-run` first if you want to see what it would
+do.
+
+Exit 1 is a conflict a person has to settle — two aliases claiming one path, or
+a shared component that was edited in place. Report what it said and stop; do
+not work around it by editing the document yourself. Ground rule 7 has no
+exceptions here: hand-editing a forty-endpoint file to satisfy one endpoint is
+how the other thirty-nine get damaged.
+
+### 9. Lint until clean
+
+```bash
+scripts/validate.sh "docs/openapi/VTEX - CX API.json"
 ```
 
 The script bootstraps whatever it needs. Do not ask the user to install Node
@@ -307,28 +378,32 @@ output.
 Do not point at an `openapi-schemas` checkout — the skill does not need one to
 lint. That repository is only the destination when a human publishes.
 
-Lint every file you wrote, and take each to zero on its own — a clean sibling
-says nothing about the file next to it.
+Spectral lints the whole document, so read the locations before fixing
+anything:
 
-Loop: read the violations, fix the content, run again. Stop only at zero
-errors. Warnings should also be zero; report any you deliberately leave, with
-the reason.
+- **Findings inside the path you merged** are yours. Fix the fragment, merge
+  again, lint again. Never patch the document to paper over a bad fragment, or
+  the next regeneration reintroduces the finding.
+- **Findings in another endpoint** were already there. Report them with their
+  rule and location and leave them alone unless the developer asks — that
+  endpoint may be mid-edit, and it is not in your scope.
 
-If the same rule keeps failing after three attempts, stop looping and report it
-with the rule name, the location and what you tried.
+Loop until your path is at zero errors and zero warnings. If the same rule keeps
+failing after three attempts, stop and report the rule, the location and what
+you tried.
 
-### 7. Report the gaps
+### 10. Report the gaps
 
 Close with a short report covering:
 
-- the scope: the current repository, and the alias when one was given
-- the files written, one per alias, with their paths
+- the scope: the repository, and the alias when one was given
+- what the merge did: the path added or replaced, the tag, and the index entry
 - routes documented, and routes skipped with the reason
 - the other aliases the inventory found but the scope excluded, so the developer
   knows what is still undocumented
 - every inventory warning, and what you did about it
 - fields whose meaning or example you had to infer, so a reviewer can check them
-- the final Spectral result
+- the Spectral result, separating your path from pre-existing findings
 - decisions that need a human: see the open questions in
   [reference.md](reference.md)
 
@@ -336,10 +411,10 @@ Do not create extra markdown files for this. The report goes in the reply.
 
 ## Publishing
 
-The generated file lives in this repository, versioned with the code that
-produced it. Publishing to the Developer Portal is a separate, human step: copy
-it into the `openapi-schemas` checkout under
-`output.publish_filename_template` and open a pull request there.
+The document lives in this repository, reviewed like code. Publishing to the
+Developer Portal is a separate, human step: copy it into the `openapi-schemas`
+checkout under `output.publish_filename` (`VTEX - CX API.json`), make sure its
+entry exists in that repository's `config.json`, and open a pull request there.
 
-Confirm the published title and file name with a technical writer before the
-first publication — the Portal derives its URL slug from them.
+Confirm the published title and the Portal slug (`output.portal_slug`, which the
+index links depend on) with a technical writer before the first publication.

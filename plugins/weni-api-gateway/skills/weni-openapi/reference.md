@@ -96,8 +96,13 @@ publication.
 
 - Sentence case, derived from the alias: `contacts` becomes `Contacts`,
   `contact-groups` becomes `Contact groups`.
-- Declare each tag once in the top-level `tags` array and reference it from the
-  operations. Enforced by `tags-should-be-in-sentence-case`.
+- One tag per alias. It is what groups the endpoint in the Portal's sidebar and
+  in the index, so an alias sharing another alias's tag makes both harder to
+  find.
+- Declare it once in the fragment's top-level `tags` array and reference it from
+  each operation. `merge.py` unions it into the document's `tags` and drops tags
+  no operation references any more. Enforced by
+  `tags-should-be-in-sentence-case`.
 
 ### Status codes
 
@@ -138,21 +143,37 @@ before including 401.
 
 ## The overview in `info.description`
 
-One escaped-markdown document covering, in order: what the API does,
-authentication, an index of every endpoint, and any shared conventions such as
-pagination.
+One markdown document, shared by every endpoint in the consolidated file,
+covering in order: what the CX API does, authentication, the index, and the
+conventions several endpoints share, such as pagination and date formats.
 
-The index entry format, which the Portal turns into anchors:
+It is written once and then maintained by people. A run scoped to one alias does
+not rewrite it. Two rules follow:
+
+- **The index is not yours.** `scripts/merge.py` regenerates the `## Index`
+  section from `paths` and the operation summaries on every merge, so it cannot
+  drift from what the document documents. Editing it by hand only creates a diff
+  the next merge undoes.
+- **Shared conventions go in the overview, not in the operation.** If your
+  endpoint paginates the same way three others do, the explanation belongs in
+  the overview's `## Pagination` section. When a convention you need is missing,
+  propose the wording in your report instead of appending a private copy to the
+  operation description.
+
+The index format the script produces, matching what VTEX's own multi-endpoint
+schemas use — grouped by tag, one line per operation:
 
 ```text
-\r\n- ``GET`` [List contacts](https://developers.vtex.com/docs/api-reference/{slug}#get-/contacts)
+## Index
+
+### Contacts
+- `GET` [List contacts](https://developers.vtex.com/docs/api-reference/cx-api#get-/contacts)
+- `GET` [Retrieve a contact](https://developers.vtex.com/docs/api-reference/cx-api#get-/contacts/-uuid-)
 ```
 
 Path parameters in the anchor replace `{` and `}` with `-`, so `/things/{id}`
-becomes `/things/-id-`. Write the overview last, after `paths` is final, and
-make sure every path in scope appears exactly once in both the index and
-`paths`. A schema scoped to one alias indexes only that alias — do not advertise
-endpoints the file does not document.
+becomes `/things/-id-`. The slug comes from `output.portal_slug` in
+`config.json`.
 
 ## Open questions
 
@@ -163,11 +184,14 @@ Carry these into the report until someone settles them.
    `/contacts`. That is consistent only if the edge maps `/api/v1/contacts` to
    Kong's `/contacts`. Confirm with infrastructure; if the mapping does not
    exist, either the server URL or the Kong paths must change.
-2. **Published title and file name.** The Portal derives its URL slug from them,
-   and `openapi-schemas/docs/centralized-api-slug-mapping.md` documents how.
-   A technical writer decides.
-3. **How the Portal groups them.** Whether the Portal publishes one reference per
-   endpoint or merges several into one is undecided, and a technical writer
-   settles it. It does not change what this skill generates: always one file per
-   alias. Merging files later is mechanical, while splitting a hand-edited one
-   is not, so the split is the safe default to sit on.
+2. **The Portal slug.** The published file name is settled — `VTEX - CX API.json`
+   — but the slug the Portal derives from it is not, and every index link
+   depends on it. `config.json` assumes `cx-api`;
+   `openapi-schemas/docs/centralized-api-slug-mapping.md` documents how the
+   mapping works. A technical writer confirms it before the first publication.
+   If it changes, one `merge.py` run rewrites every link.
+3. **~~How the Portal groups them.~~ Settled.** One reference per API, which is
+   how `openapi-schemas` is organised: each `VTEX - *.json` is a product-level
+   API holding many endpoints, often from several code repositories. Ours is
+   `VTEX - CX API.json`, and every gateway endpoint of every repository goes
+   into it.

@@ -174,6 +174,21 @@ resolve_commons() {
   return 1
 }
 
+# An explicitly named checkout wins over whatever is installed, and it applies
+# before the first attempt: the installed release may be not merely old but
+# broken, in which case Django fails to import long before it reports an unknown
+# command.
+if [[ -n "$commons_arg" ]]; then
+  if [[ ! -f "$commons_arg/$COMMAND_FILE" ]]; then
+    echo "inventory.sh: no $COMMAND_FILE under $commons_arg." >&2
+    echo "Point --weni-commons at the root of a weni-commons checkout." >&2
+    exit 2
+  fi
+  commons_abs="$(cd "$commons_arg" && pwd)"
+  note "using the weni-commons checkout at $commons_abs"
+  export PYTHONPATH="$commons_abs${PYTHONPATH:+:$PYTHONPATH}"
+fi
+
 # ------------------------------------------------------------------- run it
 
 args=(manage.py api_gateway_inventory --out "$out_arg")
