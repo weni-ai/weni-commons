@@ -45,14 +45,8 @@ class SessionTokenAuthentication(BaseAuthentication):
     invalid, expired, or when the store lookup fails, so other authentication
     classes can run afterward.
 
-<<<<<<< HEAD
     On success, sets ``request.project_uuid`` from the session and returns a
     ``SessionUser``. Org/project membership checks belong in permission classes.
-=======
-    When ``WENI_SESSION_TOKEN_ORG_MODEL`` is configured, the authenticated user is
-    a real Django user with org attached (see ``resolve_session_user``).
-    On success, ``resolve_session_user`` also sets ``request.project_uuid``.
->>>>>>> feat/weni-openapi-plugin
     """
 
     www_authenticate_realm = "api"

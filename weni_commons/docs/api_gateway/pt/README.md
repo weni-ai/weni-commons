@@ -17,10 +17,7 @@ gateway está neste repositório, em `weni_commons/kong/` e `weni_commons/auth/`
 | [05 — Instalação](05-instalacao.md) | Como colocar um serviço no gateway, variável por variável |
 | [06 — Deploy com Argo Workflows](06-deploy-argo-workflows.md) | Como o sync roda automaticamente a cada imagem nova |
 | [07 — Troubleshooting](07-troubleshooting.md) | Sintomas reais e onde olhar em cada um |
-<<<<<<< HEAD
-=======
 | [08 — Documentação OpenAPI](08-documentacao-openapi.md) | Como geramos os schemas do Developer Portal a partir do código |
->>>>>>> feat/weni-openapi-plugin
 
 ## Por onde começar
 
@@ -35,8 +32,5 @@ Depende do que você quer fazer:
 - **Operar ou depurar o gateway**: a [referência](04-referencia-weni-commons.md),
   o [deploy](06-deploy-argo-workflows.md) e o
   [troubleshooting](07-troubleshooting.md).
-<<<<<<< HEAD
-=======
 - **Documentar endpoints no Developer Portal da VTEX**: a
   [documentação OpenAPI](08-documentacao-openapi.md).
->>>>>>> feat/weni-openapi-plugin

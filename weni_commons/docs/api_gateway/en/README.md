@@ -17,10 +17,7 @@ the code a service uses to join the gateway lives in this repository, under
 | [05 — Installation](05-installation.md) | How to put a service on the gateway, variable by variable |
 | [06 — Deploying with Argo Workflows](06-deploy-argo-workflows.md) | How the sync runs automatically on every new image |
 | [07 — Troubleshooting](07-troubleshooting.md) | Real symptoms and where to look for each one |
-<<<<<<< HEAD
-=======
 | [08 — OpenAPI documentation](08-openapi-documentation.md) | How we generate the Developer Portal schemas from the code |
->>>>>>> feat/weni-openapi-plugin
 
 ## Where to start
 
@@ -37,8 +34,5 @@ It depends on what you are doing:
   [reference](04-weni-commons-reference.md),
   [deployment](06-deploy-argo-workflows.md), and
   [troubleshooting](07-troubleshooting.md).
-<<<<<<< HEAD
-=======
 - **Documenting endpoints on the VTEX Developer Portal**: the
   [OpenAPI documentation guide](08-openapi-documentation.md).
->>>>>>> feat/weni-openapi-plugin

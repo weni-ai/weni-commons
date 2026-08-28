@@ -4,14 +4,7 @@ from weni_commons.auth.authentication import (
     extract_bearer_token,
 )
 from weni_commons.auth.authenticators import WeniAuthentication
-<<<<<<< HEAD
-from weni_commons.auth.connect import (
-    ConnectAuthorizationClient,
-    ConnectProjectAuthorization,
-)
-=======
 from weni_commons.auth.connect import ConnectAuthorizationClient
->>>>>>> feat/weni-openapi-plugin
 from weni_commons.auth.context import (
     TOKEN_TYPE_JWT,
     TOKEN_TYPE_KEYCLOAK,
