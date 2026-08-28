@@ -23,6 +23,7 @@ gaps are visible instead of silently filled in. Two are worth calling out:
 import logging
 from typing import Any, Dict, List, Optional
 
+from weni_commons.kong.config import resolved_kong_service
 from weni_commons.kong.discovery import (
     converter_types,
     iter_exposed_views,
@@ -264,7 +265,8 @@ def build_inventory(
     conflicts: List[Dict[str, Any]] = []
 
     for record in iter_exposed_views(suffix):
-        if service and record["service"] != service:
+        route_service = resolved_kong_service(record["service"], prefix)
+        if service and route_service != service:
             continue
 
         upstream_path = record["upstream_path"]
@@ -286,7 +288,7 @@ def build_inventory(
             "public_path": public_path,
             "gateway_methods": gateway_methods,
             "view_methods": view_methods,
-            "service": record["service"],
+            "service": route_service,
             "alias": alias,
             "upstream_path": upstream_path,
             "compat_paths": compat_paths,

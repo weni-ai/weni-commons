@@ -8,7 +8,8 @@ by ``kong_sync`` / ``@api_gateway_expose``.
 Configuration:
     KONG_ADMIN_URL, KONG_SERVICE, KONG_SERVICE_URL and KONG_URL_PREFIX are read
     from the host project's Django settings first, then from the environment. A
-    command-line flag overrides both.
+    command-line flag overrides both. KONG_SERVICE is optional: when empty it is
+    derived from KONG_URL_PREFIX (``/billing`` → ``billing-service``).
 
 Required setup:
     - Add "weni_commons" to INSTALLED_APPS so Django discovers this command.
@@ -16,14 +17,12 @@ Required setup:
 Usage:
     # Using Django settings (recommended)
     #   KONG_ADMIN_URL = "http://kong-admin:8001"
-    #   KONG_SERVICE = "billing-service"
     #   KONG_SERVICE_URL = "https://billing.stg.cloud.weni.ai"
     #   KONG_URL_PREFIX = "/billing"
     python manage.py kong_ensure_service
 
     # Using environment variables
     KONG_ADMIN_URL=http://kong-admin:8001 \\
-    KONG_SERVICE=billing-service \\
     KONG_SERVICE_URL=https://billing.stg.cloud.weni.ai \\
     KONG_URL_PREFIX=/billing \\
     python manage.py kong_ensure_service
@@ -40,7 +39,7 @@ Usage:
 """
 from django.core.management.base import BaseCommand, CommandError
 
-from weni_commons.kong.config import resolve_config
+from weni_commons.kong.config import resolve_config, resolved_kong_service
 from weni_commons.kong.service import (
     DEFAULT_BLOCK_MESSAGE,
     DEFAULT_BLOCK_STATUS,
@@ -64,7 +63,8 @@ class Command(BaseCommand):
         parser.add_argument(
             "--service",
             default=resolve_config("KONG_SERVICE"),
-            help="Kong service name, e.g. billing-service (setting/env: KONG_SERVICE)",
+            help="Kong service name, e.g. billing-service (setting/env: KONG_SERVICE). "
+            "When omitted, derived from --url-prefix: /billing → billing-service",
         )
         parser.add_argument(
             "--url",
@@ -83,13 +83,6 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        service = (options["service"] or "").strip()
-        if not service:
-            raise CommandError(
-                "--service is required, or set KONG_SERVICE in your Django settings "
-                "or environment"
-            )
-
         url = (options["url"] or "").strip()
         if not url:
             raise CommandError(
@@ -110,6 +103,11 @@ class Command(BaseCommand):
             )
         if not url_prefix.startswith("/"):
             url_prefix = "/" + url_prefix
+
+        try:
+            service = resolved_kong_service(options["service"], url_prefix)
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
         kong_addr = (options["kong_addr"] or "").strip()
         if not options["dry_run"]:

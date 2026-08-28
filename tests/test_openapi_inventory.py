@@ -206,6 +206,14 @@ def test_service_filter_keeps_only_that_services_routes():
     ]
 
 
+def test_service_filter_includes_routes_derived_from_the_prefix():
+    built = inventory(service="flows-service")
+
+    names = [entry["route_name"] for entry in built["routes"]]
+    assert "allow-contacts" in names
+    assert "allow-dashboards-pk-widgets" not in names
+
+
 def test_warnings_are_attached_to_their_route_and_to_the_summary():
     built = inventory()
     contacts = route(built, "allow-contacts")

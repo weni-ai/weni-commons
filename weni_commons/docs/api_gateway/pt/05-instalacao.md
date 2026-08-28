@@ -47,7 +47,7 @@ do Rancher preenchem.
 # Kong API Gateway (weni_commons.kong) — usado por kong_sync e kong_ensure_service
 KONG_ADMIN_URL = env.str("KONG_ADMIN_URL")
 KONG_URL_PREFIX = env.str("KONG_URL_PREFIX")
-KONG_SERVICE = env.str("KONG_SERVICE")
+KONG_SERVICE = env.str("KONG_SERVICE", default="")  # opcional; /flows → flows-service
 KONG_SERVICE_URL = env.str("KONG_SERVICE_URL")
 
 # Session tokens (weni_commons.auth.SessionTokenAuthentication)
@@ -67,7 +67,7 @@ WENI_CONNECT_AUTHORIZATION_TIMEOUT = env.int("WENI_CONNECT_AUTHORIZATION_TIMEOUT
 |---|---|---|
 | `KONG_ADMIN_URL` | URL com esquema, apontando para a Admin API (porta `8001` por convenção). Precisa começar com `http://` ou `https://`, e normalmente é um endereço interno do cluster | É por aqui que os comandos escrevem no Kong. Vazia ou sem esquema, os comandos falham com mensagem explícita. Tem default `http://localhost:8001`, que só serve para desenvolvimento local |
 | `KONG_URL_PREFIX` | Caminho começando com `/`, com um único segmento, como `/billing` | Define o prefixo dos paths públicos, o nome da rota de bloqueio (`billing-default-block`) e a tag de propriedade das rotas (`prefix-billing`). Mudar depois de sincronizado deixa as rotas antigas sem a tag correta |
-| `KONG_SERVICE` | Nome do service no Kong, como `billing-service` | É o alvo do sync e o escopo do prune. **Não tem default**: sem ela o comando falha, e isso é proposital, porque um valor implícito poderia apagar rotas de outro serviço |
+| `KONG_SERVICE` | Nome do service no Kong, como `billing-service`. Opcional | É o alvo do sync e o escopo do prune. Quando vazia, é derivada de `KONG_URL_PREFIX` (`/billing` → `billing-service`). Um valor explícito ganha |
 | `KONG_SERVICE_URL` | URL com esquema do serviço, para onde o Kong encaminha as requisições | É o destino real do tráfego. Apontar para o ambiente errado é a falha mais traiçoeira do gateway, porque o Kong responde normalmente, só que vindo do backend errado. Ver [troubleshooting](07-troubleshooting.md) |
 
 ### Variáveis do session token
@@ -125,15 +125,17 @@ qualquer projeto — a autenticação não verifica acesso.
 from weni_commons.kong import api_gateway_expose
 
 
-@api_gateway_expose(alias="invoices", methods=["GET"], service="billing-service")
+@api_gateway_expose(alias="invoices", methods=["GET"])
 class InvoicesEndpoint(APIView):
     ...
 ```
 
 Duas recomendações:
 
-- Passe **sempre** `service=` explicitamente. O default é `"flows-service"`, e
-  esquecer o parâmetro registra a rota no service do Flows.
+- Omita `service=` a menos que a view precise ir para outro service no Kong. O
+  default é `None`, preenchido no sync com o nome deste serviço (de
+  `KONG_SERVICE`, ou derivado de `KONG_URL_PREFIX`: `/billing` →
+  `billing-service`).
 - Escolha o `alias` com cuidado, porque ele é global: dois serviços com o mesmo
   alias colidem, e o último a sincronizar fica com a rota.
 

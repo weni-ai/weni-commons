@@ -210,7 +210,8 @@ def iter_exposed_views(suffix: str = ".json") -> Iterator[Dict[str, Any]]:
         callback       — the URL callback (has ``actions`` for ViewSets)
         pattern        — the Django URLPattern
         methods        — HTTP methods the decorator allows through the gateway
-        service        — Kong service name from the decorator
+        service        — Kong service name from the decorator, or None to use
+                         the service of this sync
         alias          — short public path from the decorator, or None
         upstream_path  — Django path template, e.g. ``/api/v2/contacts.json``
 

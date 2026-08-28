@@ -43,6 +43,7 @@ from typing import Dict, List, Optional, Tuple
 
 import requests as http
 
+from weni_commons.kong.config import resolved_kong_service
 from weni_commons.kong.discovery import iter_exposed_views, kong_route_name
 from weni_commons.kong.paths import (
     has_path_params,
@@ -104,7 +105,10 @@ def _gateway_paths(
     return [full_gateway]
 
 
-def discover_routes(suffix: str = ".json") -> List[Dict]:
+def discover_routes(
+    suffix: str = ".json",
+    default_service: Optional[str] = None,
+) -> List[Dict]:
     """
     Walks Django's URL resolver and returns all views decorated with
     @api_gateway_expose, resolving each URL pattern to gateway path(s).
@@ -115,8 +119,14 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
         - Class-level or method-level decorator (method wins for alias/service)
         - Path params as Kong regex ``(?<pk>[^/]+)`` with rewrite_mode
 
+    A decorator with ``service=None`` (the default) is filled with
+    ``default_service``, or derived from ``KONG_URL_PREFIX`` when that is
+    omitted (``/flows`` → ``flows-service``). An explicit ``service=`` on
+    the decorator is kept as-is.
+
     Raises:
         KeyError: if KONG_URL_PREFIX is not set in the environment.
+        ValueError: if a None service cannot be derived from the prefix.
     """
     url_prefix = os.environ["KONG_URL_PREFIX"].rstrip("/")
 
@@ -157,7 +167,9 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
             "name": route_name,
             "paths": paths,
             "methods": record["methods"],
-            "service": record["service"],
+            "service": resolved_kong_service(
+                record["service"] or default_service, url_prefix
+            ),
             "strip_path": False,
             "upstream_uri": upstream_template,
             "rewrite_mode": rewrite_mode,
@@ -168,7 +180,7 @@ def discover_routes(suffix: str = ".json") -> List[Dict]:
             paths,
             upstream_template,
             rewrite_mode,
-            record["service"],
+            routes_by_name[route_name]["service"],
         )
 
     routes = list(routes_by_name.values())
@@ -464,10 +476,13 @@ def _is_managed_route(route: dict, service_id: str, url_prefix: str) -> bool:
     and to be recognizable as ours — by our prefix tag, or, for routes written
     before tagging, by serving a path under KONG_URL_PREFIX.
 
-    Matching the prefix tag rather than the generic ROUTE_TAG is what keeps a
-    foreign service's routes safe: ``api_gateway_expose`` defaults to
-    ``service="flows-service"``, so a repository that forgets ``service=`` lands
-    its routes on flows-service already tagged by its own sync.
+    Matching the prefix tag rather than the generic ROUTE_TAG is what keeps
+    routes of another prefix safe when they happen to sit on this Kong service.
+    ``api_gateway_expose`` defaults ``service`` to this sync's service (derived
+    from KONG_URL_PREFIX), and an explicit ``service=`` can still point a view
+    here; those routes already carry ``kong-sync``, but their prefix tag is
+    their own. If prune trusted the generic tag, this sync would treat them as
+    its own and delete them.
     """
     name = route.get("name") or ""
     if not name.startswith(ROUTE_NAME_PREFIX):

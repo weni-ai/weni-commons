@@ -24,7 +24,7 @@ class WorkspaceEndpoint(BaseAPIView):
     ...
 
 
-@api_gateway_expose(methods=["GET", "POST"], alias="events", service="flows-service")
+@api_gateway_expose(methods=["GET", "POST"], alias="events")
 class EventsEndpoint(BaseAPIView):
     ...
 ```
@@ -32,7 +32,7 @@ class EventsEndpoint(BaseAPIView):
 | Parameter | Default | What it does |
 |---|---|---|
 | `methods` | `["GET"]` | HTTP methods allowed on the route; for ViewSets, methods come from `callback.actions` when present |
-| `service` | `"flows-service"` | name of the Kong service the route is attached to |
+| `service` | `None` | Kong service the route is attached to. `None` means the service of this sync, derived from `KONG_URL_PREFIX` (`/flows` → `flows-service`). Pass an explicit name only when the view must attach to a different Kong service |
 | `alias` | `None` | short, global public path; accepts parameters, as in `alias="dashboards/{pk}/widgets"` |
 
 The decorator **registers nothing** at import time: it only sets private
@@ -43,11 +43,11 @@ It works in three places: `APIView` classes, whole ViewSets, and individual
 `@action` methods. When both the class and the method are decorated, the
 **method wins** for `alias` and `service`.
 
-> **Mind the `service`.** The default is `"flows-service"`. A service other than
-> Flows that forgets to pass `service=` will register its routes on the Flows
-> service. That is not merely cosmetic: prune operates per service, so those
-> routes become subject to the Flows sync. Always pass `service=` explicitly
-> outside Flows.
+> **Omit `service=` unless you mean a different Kong service.** The default is
+> `None`: discovery fills it with the service of this sync. That name comes from
+> `KONG_SERVICE` when set, otherwise from the prefix (`/billing` →
+> `billing-service`). Pass `service=` only for the rare view that must live on
+> another Kong service.
 
 ## Discovery
 
@@ -137,13 +137,12 @@ To be a deletion candidate, a route must pass all of these conditions:
 | The `service.id` matches the service being synced | prevents reaching another service's routes |
 | It carries the `prefix-{slug}` tag **or** serves a path under `KONG_URL_PREFIX` | confirms the route belongs to this service |
 
-The third guard uses the **prefix** tag, not the generic `kong-sync` tag, and the
-reason is precisely the default `service` pitfall. Since `@api_gateway_expose`
-points at `flows-service` by default, a repository that forgets `service=` drops
-routes on the Flows service already tagged `kong-sync`. If prune trusted the
-generic tag, the Flows sync would treat those routes as its own and delete them.
-The prefix tag is service-specific and does not have that problem. The path
-fallback exists for routes created before tagging was introduced.
+The third guard uses the **prefix** tag, not the generic `kong-sync` tag. A
+route created under another prefix (or an explicit `service=` that pointed here)
+already carries `kong-sync`, but its prefix tag is its own. If prune trusted the
+generic tag, this sync would treat those routes as its own and delete them. The
+prefix tag is specific per URL prefix. The path fallback exists for routes
+created before tagging was introduced.
 
 ### The volume guard
 
@@ -196,7 +195,7 @@ python manage.py kong_ensure_service
 | Flag | Equivalent configuration |
 |---|---|
 | `--kong-addr` | `KONG_ADMIN_URL` (default `http://localhost:8001`) |
-| `--service` | `KONG_SERVICE` |
+| `--service` | `KONG_SERVICE` (optional; derived from `--url-prefix` when omitted) |
 | `--url` | `KONG_SERVICE_URL` |
 | `--url-prefix` | `KONG_URL_PREFIX` |
 | `--dry-run` | shows what would be created, without calling the Admin API |
@@ -218,7 +217,7 @@ python manage.py kong_sync --force-prune
 | Flag | Effect |
 |---|---|
 | `--kong-addr` | Kong Admin API; `KONG_ADMIN_URL` (default `http://localhost:8001`) |
-| `--service` | Kong service; `KONG_SERVICE`, **no default** |
+| `--service` | Kong service; `KONG_SERVICE`, optional — derived from `--url-prefix` when omitted (`/flows` → `flows-service`) |
 | `--url-prefix` | service prefix; `KONG_URL_PREFIX` |
 | `--suffix` | suffix used when resolving paths (default `.json`) |
 | `--dry-run` | computes and prints the plan without writing |
@@ -227,9 +226,10 @@ python manage.py kong_sync --force-prune
 
 Two things specific to this command:
 
-- **`--service` has no default on purpose.** Since prune acts on that service's
-  routes, an implicit value could reach another service's routes. Without
-  `KONG_SERVICE` configured, the command fails instead of guessing.
+- **`--service` is optional.** When omitted, it is derived from `KONG_URL_PREFIX`
+  (`/flows` → `flows-service`). An explicit `KONG_SERVICE` or `--service` wins.
+  The derived name matches the prefix slug used in route tags (`prefix-flows`),
+  so prune stays scoped to this service.
 - **`--dry-run` needs Kong to be reachable.** The plan is computed against Kong's
   live state, and that is what lets it show deletions too. Without access to the
   Admin API, the dry run does not run.
