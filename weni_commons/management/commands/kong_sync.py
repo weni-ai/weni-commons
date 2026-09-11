@@ -33,7 +33,8 @@ by default — pass --no-prune to keep them.
 Configuration:
     KONG_URL_PREFIX, KONG_SERVICE and KONG_ADMIN_URL are read from the host
     project's Django settings first, then from the environment. A command-line
-    flag overrides both. KONG_URL_PREFIX and KONG_SERVICE are required;
+    flag overrides both. KONG_URL_PREFIX is required. KONG_SERVICE is optional:
+    when empty it is derived from the prefix (``/flows`` → ``flows-service``).
     KONG_ADMIN_URL falls back to http://localhost:8001.
 
 Required setup:
@@ -44,15 +45,14 @@ Required setup:
 Usage:
     # Using Django settings (recommended)
     #   KONG_URL_PREFIX = "/flows"
-    #   KONG_SERVICE = "flows-service"
     #   KONG_ADMIN_URL = "http://kong-admin:8001"
     python manage.py kong_sync
 
     # Using environment variables
-    KONG_URL_PREFIX=/flows KONG_SERVICE=flows-service \\
+    KONG_URL_PREFIX=/flows \\
     KONG_ADMIN_URL=http://kong-admin:8001 python manage.py kong_sync
 
-    # Passing arguments explicitly
+    # Passing arguments explicitly (KONG_SERVICE overrides the derived name)
     python manage.py kong_sync --url-prefix /flows --service flows-service \\
       --kong-addr http://localhost:8001
 
@@ -73,7 +73,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 import requests
 
-from weni_commons.kong.config import resolve_config
+from weni_commons.kong.config import resolve_config, resolved_kong_service
 from weni_commons.kong.sync import PruneLimitExceeded, discover_routes, sync_to_kong
 
 
@@ -89,7 +89,8 @@ class Command(BaseCommand):
         parser.add_argument(
             "--service",
             default=resolve_config("KONG_SERVICE"),
-            help="Kong service name to attach routes to (setting/env: KONG_SERVICE)",
+            help="Kong service name to attach routes to (setting/env: KONG_SERVICE). "
+            "When omitted, derived from --url-prefix: /flows → flows-service",
         )
         parser.add_argument(
             "--url-prefix",
@@ -128,15 +129,10 @@ class Command(BaseCommand):
                 "settings or environment"
             )
 
-        # No default on purpose: prune deletes routes attached to this service,
-        # so an implicit value could reach another service's routes.
-        service = (options["service"] or "").strip()
-        if not service:
-            raise CommandError(
-                "--service is required, or set KONG_SERVICE in your Django settings "
-                "or environment"
-            )
-        options["service"] = service
+        try:
+            options["service"] = resolved_kong_service(options["service"], url_prefix)
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
         # Required for --dry-run too: the plan is diffed against the live state.
         kong_addr = (options["kong_addr"] or "").strip()
@@ -160,7 +156,10 @@ class Command(BaseCommand):
         # which triggers every @api_gateway_expose decorator in the project.
         import_module(settings.ROOT_URLCONF)
 
-        routes = discover_routes(suffix=options["suffix"])
+        routes = discover_routes(
+            suffix=options["suffix"],
+            default_service=options["service"],
+        )
 
         if not routes:
             self.stdout.write(self.style.WARNING("No @api_gateway_expose routes found."))

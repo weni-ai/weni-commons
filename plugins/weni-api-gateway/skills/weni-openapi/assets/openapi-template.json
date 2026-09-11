@@ -1,0 +1,78 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "version": "1.0.0",
+    "title": "{{api-title}}",
+    "description": "{{escaped-markdown-overview}}"
+  },
+  "servers": [
+    {
+      "url": "https://cx.vtex.com/api/v1",
+      "description": "Weni CX API gateway."
+    }
+  ],
+  "tags": [
+    {
+      "name": "{{tag-in-sentence-case}}"
+    }
+  ],
+  "paths": {
+    "{{public-path-from-inventory}}": {
+      "{{method-in-lowercase}}": {
+        "tags": [
+          "{{tag-in-sentence-case}}"
+        ],
+        "summary": "{{sentence case, no period, no HTTP method}}",
+        "description": "{{what the endpoint does}}\r\n\r\n## Permissions\r\n\r\n{{permissions-block-from-reference}}",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Accept"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "{{field-from-inventory}}": {
+                      "type": "string",
+                      "description": "{{ends with a period.}}"
+                    }
+                  }
+                },
+                "example": {
+                  "{{field-from-inventory}}": "{{canonical-example}}"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "sessionToken": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {},
+    "parameters": {},
+    "responses": {}
+  }
+}
