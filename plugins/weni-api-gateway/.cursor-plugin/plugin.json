@@ -1,0 +1,19 @@
+{
+  "name": "weni-api-gateway",
+  "description": "Generates VTEX Developer Portal OpenAPI 3.0 schemas for Django REST endpoints exposed through the Weni API Gateway",
+  "version": "0.1.0",
+  "author": {
+    "name": "Weni"
+  },
+  "homepage": "https://github.com/weni-ai/weni-commons",
+  "repository": "https://github.com/weni-ai/weni-commons",
+  "license": "MIT",
+  "keywords": [
+    "openapi",
+    "api-gateway",
+    "django",
+    "django-rest-framework",
+    "vtex",
+    "weni"
+  ]
+}

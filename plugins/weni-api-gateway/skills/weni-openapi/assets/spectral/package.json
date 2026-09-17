@@ -1,0 +1,8 @@
+{
+  "name": "weni-openapi-spectral",
+  "private": true,
+  "description": "Pinned Spectral CLI for the weni-openapi skill. The ruleset lives next to this file; node_modules is installed on first lint and is not committed.",
+  "dependencies": {
+    "@stoplight/spectral-cli": "6.16.3"
+  }
+}
