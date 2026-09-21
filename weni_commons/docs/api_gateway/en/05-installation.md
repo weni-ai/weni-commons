@@ -194,9 +194,9 @@ layer, so a failure points straight at the culprit.
    DynamoDBSessionTokenRepository().get("<token>")
    ```
 
-   The return should be a dict with `project`, `user`, and `expire_at`. `None`
-   means a nonexistent token, the wrong table, the wrong region, or a credential
-   without permission.
+   The return should be a dict with `project` and `user`, plus `expire_at` when
+   the token has an expiry. `None` means a nonexistent token, the wrong table,
+   the wrong region, or a credential without permission.
 
 3. **The full validation works.**
 
