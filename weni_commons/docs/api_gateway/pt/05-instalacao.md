@@ -193,9 +193,9 @@ camada, então uma falha aponta direto para o culpado.
    DynamoDBSessionTokenRepository().get("<token>")
    ```
 
-   O retorno deve ser um dicionário com `project`, `user` e `expire_at`. `None`
-   significa token inexistente, tabela errada, região errada ou credencial sem
-   permissão.
+   O retorno deve ser um dicionário com `project` e `user`, e `expire_at` quando
+   o token tem prazo. `None` significa token inexistente, tabela errada, região
+   errada ou credencial sem permissão.
 
 3. **A validação completa funciona.**
 

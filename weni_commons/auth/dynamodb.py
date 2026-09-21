@@ -27,9 +27,11 @@ class DynamoDBSessionTokenRepository:
     """
     Repository for session tokens stored in a shared DynamoDB table.
 
-    The table is keyed by ``token_hash`` and stores ``project``, ``user`` and
-    ``expire_at`` (ISO 8601). A numeric ``ttl`` attribute (epoch seconds) is
-    written so DynamoDB can expire stale items natively.
+    The table is keyed by ``token_hash`` and stores ``project``, ``user`` and,
+    when the token expires, ``expire_at`` (ISO 8601). A numeric ``ttl``
+    attribute (epoch seconds) is written so DynamoDB can expire stale items
+    natively. Tokens without ``expire_at`` have no TTL and remain until
+    deleted.
     """
 
     def __init__(self, table=None, table_name: Optional[str] = None, region_name: Optional[str] = None) -> None:
@@ -65,17 +67,23 @@ class DynamoDBSessionTokenRepository:
         user = item.get("user")
         expire_at = item.get("expire_at")
 
-        if not project or not user or not expire_at:
+        if not project or not user:
             return None
 
-        return {
+        payload = {
             "project": str(project),
             "user": str(user),
-            "expire_at": str(expire_at),
         }
+        if expire_at:
+            payload["expire_at"] = str(expire_at)
+        return payload
 
     def put(
-        self, token_hash: str, project: str, user: str, expire_at: str
+        self,
+        token_hash: str,
+        project: str,
+        user: str,
+        expire_at: Optional[str] = None,
     ) -> None:
         if not token_hash or not self._table_name:
             return
@@ -84,12 +92,13 @@ class DynamoDBSessionTokenRepository:
             DYNAMODB_PARTITION_KEY: token_hash,
             "project": str(project),
             "user": str(user),
-            "expire_at": str(expire_at),
         }
 
-        epoch = _to_epoch(expire_at)
-        if epoch is not None:
-            item["ttl"] = epoch
+        if expire_at:
+            item["expire_at"] = str(expire_at)
+            epoch = _to_epoch(expire_at)
+            if epoch is not None:
+                item["ttl"] = epoch
 
         self._get_table().put_item(Item=item)
 

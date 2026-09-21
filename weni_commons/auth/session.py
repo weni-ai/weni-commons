@@ -14,17 +14,25 @@ def build_cache_key(token_hash: str) -> str:
     return CACHE_KEY_TEMPLATE.format(hash=token_hash)
 
 
-def compute_redis_ttl(expire_at_iso: str, max_ttl: Optional[int] = None) -> int:
+def compute_redis_ttl(
+    expire_at_iso: Optional[str], max_ttl: Optional[int] = None
+) -> int:
     """
     Return the TTL (seconds) for caching a token in Redis.
 
-    The value is capped at ``max_ttl`` (default 24h). A value <= 0 means the
-    token is already expired and should not be cached.
+    The value is capped at ``max_ttl``. A value <= 0 means the token is
+    already expired and should not be cached.
+
+    When ``expire_at_iso`` is missing the token has no expiration: it is
+    cached for ``max_ttl`` so it is reloaded from DynamoDB periodically.
     """
     if max_ttl is None:
         max_ttl = getattr(
             settings, "WENI_SESSION_TOKEN_MAX_REDIS_TTL", MAX_REDIS_TTL_SECONDS
         )
+
+    if not expire_at_iso:
+        return max_ttl
 
     try:
         parsed = datetime.fromisoformat(expire_at_iso)
@@ -61,7 +69,7 @@ def evict_cache(redis_connection, token_hash: str) -> None:
 class SessionContext:
     project: str
     user: str
-    expire_at: str
+    expire_at: Optional[str] = None
 
 
 def _build_session_context(payload: dict) -> Optional[SessionContext]:
@@ -72,13 +80,13 @@ def _build_session_context(payload: dict) -> Optional[SessionContext]:
     user = payload.get("user")
     expire_at = payload.get("expire_at")
 
-    if not project or not user or not expire_at:
+    if not project or not user:
         return None
 
     return SessionContext(
         project=str(project),
         user=str(user),
-        expire_at=str(expire_at),
+        expire_at=str(expire_at) if expire_at else None,
     )
 
 

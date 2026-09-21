@@ -188,7 +188,7 @@ pattern (the default is `.json`).
 |---|---|
 | `401` | Keycloak token missing, invalid, or expired |
 | `404` | user not authorized on the given `project_uuid` |
-| `400` | `duration` outside the range allowed by Connect's settings |
+| `400` | `duration` outside the range allowed by Connect's settings. Omitting `duration` is valid and issues a token with no expiry |
 
 ## `200` with HTML instead of JSON
 

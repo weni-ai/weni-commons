@@ -163,3 +163,22 @@ def test_end_to_end_with_redis_payload(mock_get_redis, factory, valid_payload):
     assert response.data["user"] == "user@example.com"
     assert response.data["project_uuid"] == "project-uuid"
     assert response.data["user_type"] == "SessionUser"
+
+
+@patch("weni_commons.auth.session.get_redis_connection")
+def test_end_to_end_with_redis_payload_without_expire_at(mock_get_redis, factory):
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(
+        {"project": "project-uuid", "user": "user@example.com"}
+    ).encode("utf-8")
+    mock_get_redis.return_value = mock_redis
+
+    request = factory.get(
+        "/contacts",
+        HTTP_AUTHORIZATION="Bearer valid-hash",
+    )
+    response = ProtectedView.as_view()(request)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["user"] == "user@example.com"
+    assert response.data["project_uuid"] == "project-uuid"
