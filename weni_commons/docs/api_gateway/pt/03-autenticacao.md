@@ -26,9 +26,10 @@ curl -s -G "${CONNECT_BASE_URL}/v2/projects/${PROJECT_UUID}/get-token" \
 
 Essa chamada é autenticada com o token do Keycloak da sessão logada, e o Connect
 só emite o hash se o usuário tiver autorização no projeto pedido — caso contrário
-responde `404`. O parâmetro `duration` é obrigatório, em segundos, e é validado
-contra `SESSION_TOKEN_MIN_DURATION` e `SESSION_TOKEN_MAX_DURATION` nas settings do
-Connect; fora do intervalo, a resposta é `400`.
+responde `404`. O parâmetro `duration` é opcional, em segundos. Quando informado,
+é validado contra `SESSION_TOKEN_MIN_DURATION` e `SESSION_TOKEN_MAX_DURATION` nas
+settings do Connect; fora do intervalo, a resposta é `400`. Sem `duration`, o
+token não expira e permanece válido até ser invalidado explicitamente.
 
 Ao emitir, o Connect grava o token no DynamoDB e já aquece o próprio Redis. Vale
 notar que esse aquecimento vale só para o Connect: cada serviço tem o seu Redis, e
@@ -91,7 +92,9 @@ Dois comportamentos merecem atenção:
   `min(tempo restante do token, WENI_SESSION_TOKEN_MAX_REDIS_TTL)`. Um token de 24
   horas não fica 24 horas em cache: ele é recarregado do DynamoDB periodicamente,
   o que limita a janela em que um token invalidado continuaria aceito por um
-  serviço que já o tinha em cache.
+  serviço que já o tinha em cache. Tokens sem expiração usam o mesmo teto: eles
+  permanecem no DynamoDB até serem invalidados, e o Redis os recarrega
+  periodicamente.
 
 ## O que fica no request
 
@@ -189,12 +192,13 @@ A tabela é compartilhada entre os serviços e tem uma estrutura simples:
 | `token_hash` | string | chave de partição; o hash do token |
 | `project` | string | UUID do projeto |
 | `user` | string | e-mail do usuário que gerou o token |
-| `expire_at` | string | data e hora de expiração, em ISO 8601 |
-| `ttl` | número | o mesmo `expire_at` em epoch, para o TTL nativo do DynamoDB |
+| `expire_at` | string | opcional; data e hora de expiração, em ISO 8601. Ausente quando o token não expira |
+| `ttl` | número | opcional; o mesmo `expire_at` em epoch, para o TTL nativo do DynamoDB |
 
 O `ttl` é o que faz o DynamoDB apagar itens vencidos sozinho. Ele existe em
 paralelo ao `expire_at` porque o TTL nativo exige um atributo numérico em epoch,
-enquanto a validação no código compara a data em ISO.
+enquanto a validação no código compara a data em ISO. Tokens sem `expire_at`
+também não levam `ttl`, e só saem da tabela quando alguém os invalida.
 
 O repositório (`DynamoDBSessionTokenRepository`) é tolerante a tabela não
 configurada: se o nome da tabela estiver vazio, todas as operações se tornam

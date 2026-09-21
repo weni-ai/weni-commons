@@ -187,7 +187,7 @@ de URL do projeto (o default é `.json`).
 |---|---|
 | `401` | token do Keycloak ausente, inválido ou expirado |
 | `404` | usuário sem autorização no `project_uuid` informado |
-| `400` | `duration` fora do intervalo permitido nas settings do Connect |
+| `400` | `duration` fora do intervalo permitido nas settings do Connect. Omitir `duration` é válido e gera um token sem expiração |
 
 ## `200` com HTML em vez de JSON
 
