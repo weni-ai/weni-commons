@@ -26,10 +26,11 @@ curl -s -G "${CONNECT_BASE_URL}/v2/projects/${PROJECT_UUID}/get-token" \
 
 This call is authenticated with the Keycloak token of the logged-in session, and
 Connect only issues the hash if the user is authorized on the requested project —
-otherwise it answers `404`. The `duration` parameter is required, in seconds, and
-is validated against `SESSION_TOKEN_MIN_DURATION` and
+otherwise it answers `404`. The `duration` parameter is optional, in seconds.
+When present, it is validated against `SESSION_TOKEN_MIN_DURATION` and
 `SESSION_TOKEN_MAX_DURATION` in Connect's settings; out of range, the answer is
-`400`.
+`400`. Without `duration`, the token does not expire and remains valid until it
+is explicitly invalidated.
 
 On issuance, Connect writes the token to DynamoDB and warms its own Redis. Worth
 noting that this warm-up only helps Connect: each service has its own Redis, so a
@@ -90,7 +91,9 @@ Two behaviors deserve attention:
   `min(token time remaining, WENI_SESSION_TOKEN_MAX_REDIS_TTL)`. A 24-hour token
   is not cached for 24 hours: it is periodically reloaded from DynamoDB, which
   bounds the window in which an invalidated token would still be accepted by a
-  service that already had it cached.
+  service that already had it cached. Tokens without expiration use the same
+  ceiling: they stay in DynamoDB until invalidated, and Redis reloads them
+  periodically.
 
 ## What lands on the request
 
@@ -187,12 +190,13 @@ The table is shared across services and has a simple structure:
 | `token_hash` | string | partition key; the token hash |
 | `project` | string | project UUID |
 | `user` | string | email of the user who generated the token |
-| `expire_at` | string | expiration timestamp, in ISO 8601 |
-| `ttl` | number | the same `expire_at` as epoch, for DynamoDB native TTL |
+| `expire_at` | string | optional; expiration timestamp, in ISO 8601. Absent when the token does not expire |
+| `ttl` | number | optional; the same `expire_at` as epoch, for DynamoDB native TTL |
 
 `ttl` is what makes DynamoDB delete expired items on its own. It exists alongside
 `expire_at` because native TTL requires a numeric epoch attribute, while the
-validation in code compares the ISO timestamp.
+validation in code compares the ISO timestamp. Tokens without `expire_at` also
+omit `ttl`, and only leave the table when someone invalidates them.
 
 The repository (`DynamoDBSessionTokenRepository`) tolerates an unconfigured
 table: if the table name is empty, every operation becomes a no-op and validation
